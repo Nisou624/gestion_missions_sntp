@@ -17,10 +17,10 @@ if(!$access_granted) {
 
 $mid = intval($_GET['mid']);
 
-// IMPORTANT: Récupérer TOUS les détails y compris la signature
+// Récupérer les détails de la mission avec signature du validateur
 $sql = "SELECT m.*, u.Nom, u.Prenom, u.Fonction as UserFonction, u.Departement,
                v.Nom as ValidatorNom, v.Prenom as ValidatorPrenom, v.Fonction as ValidatorFonction,
-               v.SignatureImage as ValidatorSignature
+               v.SignatureImage, v.SignatureType
         FROM tblmissions m 
         JOIN tblusers u ON m.UserID = u.ID 
         LEFT JOIN tblusers v ON m.ValidatedBy = v.ID
@@ -64,13 +64,16 @@ class MissionPDF extends TCPDF {
             $this->Cell(0, 10, 'SOCIÉTÉ NATIONALE DE TRAVAUX PUBLICS', 0, 1, 'C');
         }
         
+        // Tél/Fax et Référence
         $this->SetY(52);
         $this->SetFont('helvetica', 'B', 10);
         $this->SetTextColor(0, 0, 0);
         
+        // Tél à gauche
         $this->SetX(20);
         $this->Cell(80, 4, 'Tél. : 028-28.86.56/7948', 0, 0, 'L');
         
+        // Référence à droite
         if (!empty($this->referenceNumber)) {
           $this->SetFont('helvetica', 'B', 10);
           $this->SetY(60);
@@ -79,6 +82,7 @@ class MissionPDF extends TCPDF {
             $this->Ln();
         }
         
+        // Fax à gauche
         $this->SetFont('helvetica', 'B', 10);
         $this->SetY(57);
         $this->SetX(20);
@@ -144,7 +148,6 @@ $labelWidth = 75;
 $lineHeight = 8;
 
 $pdf->SetFont('helvetica', 'B', 14);
-
 // Nom
 $pdf->Cell($labelWidth, $lineHeight, 'Nom :', 0, 0, 'L');
 $pdf->Cell(0, $lineHeight, strtoupper($mission->NomPrenom), 0, 1, 'L');
@@ -193,61 +196,34 @@ $pdf->SetFont('helvetica', 'B', 11);
 $pdf->Cell(0, 6, 'La Directrice des Ressources Humaines', 0, 1, 'R');
 $pdf->Ln(1);
 $pdf->Cell(0, 6, 'et des Moyens Généraux', 0, 1, 'R');
-$pdf->Ln(10);
+$pdf->Ln(5);
+
+// INSÉRER LA SIGNATURE SI DISPONIBLE
+if(isset($mission->SignatureImage) && !empty($mission->SignatureImage)) {
+    $signaturePath = PDF_SIGNATURE_PATH . $mission->SignatureImage;
+    
+    if(file_exists($signaturePath) && is_readable($signaturePath)) {
+        // Position X pour aligner à droite (ajustez selon la largeur de votre signature)
+        $signatureWidth = 60;  // Largeur de la signature en mm
+        $pageWidth = $pdf->getPageWidth();
+        $rightMargin = 20;
+        $signatureX = $pageWidth - $rightMargin - $signatureWidth;
+        
+        // Insérer l'image de la signature
+        $pdf->Image($signaturePath, $signatureX, $pdf->GetY(), $signatureWidth, 0, '', '', '', false, 300, '', false, false, 0);
+        $pdf->Ln(25);
+    } else {
+        $pdf->Ln(15);
+    }
+} else {
+    $pdf->Ln(15);
+}
 
 // Nom du validateur
 $validatorName = 'I. BOURAHLA';
 if (isset($mission->ValidatorNom) && isset($mission->ValidatorPrenom)) {
     $firstInitial = mb_substr($mission->ValidatorPrenom, 0, 1);
     $validatorName = strtoupper($firstInitial . '. ' . $mission->ValidatorNom);
-}
-
-// ========== INSERTION DE LA SIGNATURE ==========
-// Vérifier si on a une signature dans la mission OU du validateur
-$signatureFile = null;
-
-// D'abord, vérifier si la mission a une signature spécifique
-if(isset($mission->SignaturePath) && !empty($mission->SignaturePath)) {
-    $signatureFile = $mission->SignaturePath;
-}
-// Sinon, utiliser la signature enregistrée du validateur
-elseif(isset($mission->ValidatorSignature) && !empty($mission->ValidatorSignature)) {
-    $signatureFile = $mission->ValidatorSignature;
-}
-
-if($signatureFile) {
-    $signaturePath = PDF_SIGNATURE_PATH . $signatureFile;
-    
-    // Debug: Afficher le chemin (en développement)
-    if(isset($_GET['debug'])) {
-        echo "Chemin signature: " . $signaturePath . "<br>";
-        echo "Fichier existe: " . (file_exists($signaturePath) ? "OUI" : "NON") . "<br>";
-        echo "Fichier lisible: " . (is_readable($signaturePath) ? "OUI" : "NON") . "<br>";
-        exit();
-    }
-    
-    if(file_exists($signaturePath) && is_readable($signaturePath)) {
-        // Calculer la position pour aligner à droite
-        $signatureWidth = 50;  // Largeur en mm
-        $pageWidth = $pdf->getPageWidth();
-        $rightMargin = 20;
-        $signatureX = $pageWidth - $rightMargin - $signatureWidth;
-        
-        // Insérer l'image de la signature
-        try {
-            $pdf->Image($signaturePath, $signatureX, $pdf->GetY(), $signatureWidth, 0, '', '', '', false, 300, '', false, false, 0);
-            $pdf->Ln(10); // Espace après la signature
-        } catch(Exception $e) {
-            // En cas d'erreur, continuer sans signature
-            $pdf->Ln(15);
-        }
-    } else {
-        // Pas de signature trouvée, ajouter de l'espace
-        $pdf->Ln(15);
-    }
-} else {
-    // Aucune signature définie
-    $pdf->Ln(15);
 }
 
 $pdf->SetFont('helvetica', 'BU', 11);
