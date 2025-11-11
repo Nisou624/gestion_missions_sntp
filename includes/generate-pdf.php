@@ -1,6 +1,7 @@
 <?php
 session_start();
-error_reporting(0);
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 include('config.php');
 
 // Vérifier l'accès
@@ -33,155 +34,187 @@ if($query->rowCount() == 0) {
     exit();
 }
 
-// Créer le PDF avec TCPDF (version simplifiée sans dépendance externe)
-class SimplePDF {
-    private $content = '';
+// Charger TCPDF
+require_once('../vendor/tecnickcom/tcpdf/tcpdf.php');
+
+// Définir le chemin des images
+$basePath = dirname(__DIR__);
+$basePath = str_replace(DIRECTORY_SEPARATOR . DIRECTORY_SEPARATOR, DIRECTORY_SEPARATOR, $basePath);
+define('PDF_IMAGE_PATH', $basePath . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'images' . DIRECTORY_SEPARATOR);
+
+// Classe personnalisée pour le PDF
+class MissionPDF extends TCPDF {
+    private $referenceNumber;
     
-    public function AddPage() {
-        // En-tête HTML
-        $this->content = '<!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>Ordre de Mission - ' . htmlspecialchars($mission->ReferenceNumber) . '</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-                .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 10px; }
-                .reference { text-align: right; font-weight: bold; margin: 20px 0; }
-                .title { text-align: center; font-size: 24px; font-weight: bold; margin: 30px 0; text-decoration: underline; }
-                .content { margin: 20px 0; }
-                .field { margin: 10px 0; }
-                .field strong { display: inline-block; width: 200px; }
-                .signature { margin-top: 60px; text-align: right; }
-                .footer { margin-top: 40px; text-align: center; font-size: 12px; border-top: 1px solid #ccc; padding-top: 10px; }
-                @media print { 
-                    body { margin: 0; }
-                    .no-print { display: none; }
-                }
-            </style>
-        </head>
-        <body>';
+    public function setReferenceNumber($ref) {
+        $this->referenceNumber = $ref;
     }
     
-    public function WriteHTML($html) {
-        $this->content .= $html;
-    }
-    
-    public function Output($filename = '', $dest = '') {
-        global $mission;
+    // En-tête personnalisé
+    public function Header() {
+        $headerImage = PDF_IMAGE_PATH . 'header-sntp.jpg';
         
-        $this->content .= '</body></html>';
-        
-        // Si c'est une demande de téléchargement, forcer le téléchargement
-        if($dest == 'D' || isset($_GET['download'])) {
-            header('Content-Type: application/pdf');
-            header('Content-Disposition: attachment; filename="' . $filename . '"');
-            // Pour la démo, on génère un HTML qui peut être sauvegardé en PDF via le navigateur
-            echo $this->content;
+        if (file_exists($headerImage) && is_readable($headerImage)) {
+            // Image centrée
+            $this->Image($headerImage, 15, 10, 180, 0, 'JPG', '', 'T', false, 300, '', false, false, 0, false, false, false);
         } else {
-            // Affichage direct pour impression
-            echo $this->content;
-            echo '<script>
-                window.onload = function() {
-                    // Auto-print si demandé
-                    if(confirm("Voulez-vous imprimer cet ordre de mission ?")) {
-                        window.print();
-                    }
-                }
-            </script>';
+            $this->SetY(15);
+            $this->SetFont('helvetica', 'B', 16);
+            $this->Cell(0, 10, 'SOCIÉTÉ NATIONALE DE TRAVAUX PUBLICS', 0, 1, 'C');
+        }
+        
+        // Tél/Fax et Référence - Position ajustée
+        $this->SetY(52);
+        $this->SetFont('helvetica', 'B', 10);
+        $this->SetTextColor(0, 0, 0);
+        
+        // Tél à gauche
+        $this->SetX(20);
+        $this->Cell(80, 4, 'Tél. : 028-28.86.56/7948', 0, 0, 'L');
+        
+        // Référence à droite sur la même ligne
+        if (!empty($this->referenceNumber)) {
+          $this->SetFont('helvetica', 'B', 10);
+          $this->SetY(60);
+          $this->Cell(0, 4, 'Réf N°' . $this->referenceNumber, 0, 1, 'R');
+        } else {
+            $this->Ln();
+        }
+        
+        // Fax à gauche (ligne suivante)
+        $this->SetFont('helvetica', 'B', 10);
+        $this->SetY(57);
+        $this->SetX(20);
+        $this->Cell(0, 4, 'Fax : 028-28.82.39', 0, 1, 'L');
+        
+        $this->Ln(3);
+    }
+    
+    // Pied de page personnalisé
+    public function Footer() {
+        $footerImage = PDF_IMAGE_PATH . 'footer-sntp.jpg';
+        
+        if (file_exists($footerImage) && is_readable($footerImage)) {
+            $this->Image($footerImage, 15, 275, 180, 0, 'JPG', '', 'T', false, 300, '', false, false, 0, false, false, false);
+        } else {
+            $this->SetY(-15);
+            $this->SetFont('helvetica', '', 8);
+            $this->Cell(0, 5, 'Siège Social : Route Nationale n°5 El Hamiz BP 39 - Bordj El Kiffan - Alger', 0, 1, 'C');
+            $this->Cell(0, 5, 'Tél : 023.86.35.95/99  Fax : 023.86.36.03  Site Internet : www.sntp.dz', 0, 1, 'C');
         }
     }
 }
 
-$pdf = new SimplePDF();
+// Créer le document PDF
+$pdf = new MissionPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+
+// Métadonnées
+$pdf->SetCreator('SNTP - Gestion des Missions');
+$pdf->SetAuthor('SNTP');
+$pdf->SetTitle('Ordre de Mission - ' . $mission->ReferenceNumber);
+$pdf->SetSubject('Ordre de Mission');
+
+// Configurer la référence
+$pdf->setReferenceNumber($mission->ReferenceNumber);
+
+// Activer en-tête et pied de page
+$pdf->setPrintHeader(true);
+$pdf->setPrintFooter(true);
+
+// Marges ajustées
+$pdf->SetMargins(20, 58, 20);  // Marges latérales plus larges pour centrer
+$pdf->SetHeaderMargin(0);
+$pdf->SetFooterMargin(22);
+
+// Saut de page automatique
+$pdf->SetAutoPageBreak(TRUE, 25);
+
+// Ajouter une page
 $pdf->AddPage();
 
-// Contenu du PDF basé sur l'image fournie
-$html = '
-<div class="header">
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
-        <tr>
-            <td width="100" style="text-align: center; vertical-align: middle;">
-                <div style="width: 80px; height: 80px; background: #dc3545; border-radius: 50%; margin: 0 auto; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">SNTP</div>
-            </td>
-            <td style="text-align: center; vertical-align: middle;">
-                <h2 style="margin: 0; color: #dc3545;">SOCIÉTÉ NATIONALE DE TRAVAUX PUBLICS</h2>
-                <p style="margin: 5px 0; color: #666;">الشركة الوطنية للأشغال العمومية</p>
-                <p style="margin: 5px 0; font-size: 12px;">EPE /S.P.A au Capital Social de 2.400.000.000,00 DA</p>
-            </td>
-            <td width="100" style="text-align: center; vertical-align: middle;">
-                <div style="width: 80px; height: 80px; background: #dc3545; border-radius: 50%; margin: 0 auto; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">SNTP</div>
-            </td>
-        </tr>
-    </table>
-</div>
+// TITRE: "ORDRE DE MISSION"
+$pdf->SetFont('helvetica', 'BU', 20);
+$pdf->SetTextColor(0, 0, 0);
+$pdf->Ln(15);
+$pdf->Cell(0, 10, 'ORDRE DE MISSION', 0, 1, 'C');
+$pdf->Ln(10);
 
-<div class="reference">
-    Réf N°' . htmlspecialchars($mission->ReferenceNumber) . '
-</div>
+// CONTENU - Ajusté selon l'original
+$pdf->SetFont('helvetica', '', 11);
+$pdf->SetTextColor(0, 0, 0);
 
-<div class="title">
-    ORDRE DE MISSION
-</div>
+$labelWidth = 75;  // Augmenté pour "Motif de Déplacement"
+$lineHeight = 8;
 
-<div class="content">
-    <div class="field">
-        <strong>Nom :</strong> ' . htmlspecialchars($mission->NomPrenom) . '
-    </div>
-    
-    <div class="field">
-        <strong>Fonction :</strong> ' . htmlspecialchars($mission->UserFonction) . '
-    </div>
-    
-    <div class="field">
-        <strong>Itinéraire :</strong> ' . htmlspecialchars($mission->VilleDepart . ' - ' . $mission->Destinations) . '
-    </div>
-    
-    <div class="field">
-        <strong>Motif de Déplacement :</strong> ' . htmlspecialchars($mission->MotifDeplacement) . '
-    </div>
-    
-    <div class="field">
-        <strong>Date de Départ :</strong> ' . date('d/m/Y', strtotime($mission->DateDepart)) . '
-    </div>
-    
-    <div class="field">
-        <strong>Date de Retour :</strong> ' . date('d/m/Y H:i', strtotime($mission->DateRetour)) . '
-    </div>
-    
-    <div class="field">
-        <strong>Moyen de Transport :</strong> ' . htmlspecialchars($mission->MoyenTransport) . '
-    </div>
-</div>
+$pdf->SetFont('helvetica', 'B', 14);
+// Nom (label normal, valeur en GRAS)
+$pdf->Cell($labelWidth, $lineHeight, 'Nom :', 0, 0, 'L');
+$pdf->Cell(0, $lineHeight, strtoupper($mission->NomPrenom), 0, 1, 'L');
+$pdf->Ln(2);
 
-<div class="signature">
-    <p>Fait à El-Hamiz, le ' . date('d/m/Y') . '</p>
-    <br><br>
-    <p><strong>La Directrice des Ressources Humaines</strong></p>
-    <p><strong>et des Moyens Généraux</strong></p>
-    <br><br>
-    <p style="text-decoration: underline;"><strong>' . 
-    (isset($mission->ValidatorNom) ? strtoupper($mission->ValidatorNom . ' ' . $mission->ValidatorPrenom) : 'I. BOURAHLA') . 
-    '</strong></p>
-</div>
+// Fonction (tout normal, pas de gras)
+$pdf->SetFont('helvetica', 'B', 14);
+$pdf->Cell($labelWidth, $lineHeight, 'Fonction :', 0, 0, 'L');
+$pdf->Cell(0, $lineHeight, $mission->UserFonction, 0, 1, 'L');
+$pdf->Ln(2);
 
-<div class="footer">
-    <p><strong>Siège Social :</strong> Route Nationale n°5 El Hamiz BP 39 - Bordj El Kiffan - Alger</p>
-    <p><strong>Tél :</strong> 023.86.35.95/99 <strong>Fax :</strong> 023.86.36.03 <strong>Site Internet :</strong> www.sntp.dz</p>
-</div>
+// Itinéraire (tout normal) - FIX: Utiliser SetFont avant
+$pdf->SetFont('helvetica', 'B', 14);
+$pdf->Cell($labelWidth, $lineHeight, 'Itinéraire :', 0, 0, 'L');
+$itineraire = strtoupper($mission->VilleDepart) . ' - ' . strtoupper(str_replace(',', ' - ', $mission->Destinations));
+// Utiliser Cell au lieu de MultiCell pour une seule ligne
+$pdf->Cell(0, $lineHeight, $itineraire, 0, 1, 'L');
+$pdf->Ln(2);
 
-<div class="no-print" style="position: fixed; top: 10px; right: 10px; background: white; padding: 10px; border: 1px solid #ccc; border-radius: 5px;">
-    <button onclick="window.print()" style="background: #28a745; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer;">
-        <i class="fas fa-print"></i> Imprimer
-    </button>
-    <button onclick="window.close()" style="background: #dc3545; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer; margin-left: 5px;">
-        <i class="fas fa-times"></i> Fermer
-    </button>
-</div>';
+// Motif de déplacement
+$pdf->Cell($labelWidth, $lineHeight, 'Motif de Déplacement :', 0, 0, 'L');
+$pdf->Cell(0, $lineHeight, $mission->MotifDeplacement, 0, 1, 'L');
+$pdf->Ln(2);
 
-$pdf->WriteHTML($html);
+// Date de départ
+$pdf->Cell($labelWidth, $lineHeight, 'Date de Départ :', 0, 0, 'L');
+$pdf->Cell(0, $lineHeight, date('d/m/Y', strtotime($mission->DateDepart)), 0, 1, 'L');
+$pdf->Ln(2);
 
-// Générer le fichier
+// Date de retour
+$pdf->Cell($labelWidth, $lineHeight, 'Date de Retour :', 0, 0, 'L');
+$pdf->Cell(0, $lineHeight, date('d/m/Y H:i', strtotime($mission->DateRetour)), 0, 1, 'L');
+$pdf->Ln(2);
+
+// Moyen de transport
+$pdf->Cell($labelWidth, $lineHeight, 'Moyen de Transport :', 0, 0, 'L');
+$pdf->Cell(0, $lineHeight, $mission->MoyenTransport, 0, 1, 'L');
+
+// SIGNATURE
+$pdf->Ln(25);
+$pdf->SetFont('helvetica', '', 11);
+$pdf->Cell(0, 6, 'Fait à El-Hamiz, le ' . date('d/m/Y') . '.', 0, 1, 'R');
+$pdf->Ln(10);
+
+// Titre de la fonction en GRAS
+$pdf->SetFont('helvetica', 'B', 11);
+$pdf->Cell(0, 6, 'La Directrice des Ressources Humaines', 0, 1, 'R');
+$pdf->Ln(1);
+$pdf->Cell(0, 6, 'et des Moyens Généraux', 0, 1, 'R');
+$pdf->Ln(10);
+
+// Nom du validateur en GRAS et SOULIGNÉ
+$validatorName = 'I. BOURAHLA';
+if (isset($mission->ValidatorNom) && isset($mission->ValidatorPrenom)) {
+    $firstInitial = mb_substr($mission->ValidatorPrenom, 0, 1);
+    $validatorName = strtoupper($firstInitial . '. ' . $mission->ValidatorNom);
+}
+
+$pdf->SetFont('helvetica', 'BU', 11);
+$pdf->Cell(0, 6, $validatorName, 0, 1, 'R');
+
+// Générer le PDF
 $filename = 'ordre_mission_' . $mission->ReferenceNumber . '.pdf';
-$pdf->Output($filename, isset($_GET['download']) ? 'D' : 'I');
+
+if(isset($_GET['download']) && $_GET['download'] == '1') {
+    $pdf->Output($filename, 'D');
+} else {
+    $pdf->Output($filename, 'I');
+}
 ?>
+
