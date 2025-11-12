@@ -1,6 +1,7 @@
 <?php
 session_start();
-error_reporting(0);
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 include('../includes/config.php');
 
 if (strlen($_SESSION['GMScid']) == 0) {
@@ -8,6 +9,37 @@ if (strlen($_SESSION['GMScid']) == 0) {
     exit();
 } else {
     $chef_id = $_SESSION['GMScid'];
+    
+    // Traitement de la suppression du cachet
+    if(isset($_GET['delete']) && $_GET['delete'] == 1) {
+        $sql = "SELECT StampImage FROM tblusers WHERE ID=:uid";
+        $query = $dbh->prepare($sql);
+        $query->bindParam(':uid', $chef_id, PDO::PARAM_STR);
+        $query->execute();
+        $result = $query->fetch(PDO::FETCH_OBJ);
+        
+        if($result && !empty($result->StampImage)) {
+            $file_path = '../assets/stamps/' . $result->StampImage;
+            
+            // Vérifier et supprimer réellement le fichier
+            if(file_exists($file_path)) {
+                if(unlink($file_path)) {
+                    error_log("Cachet supprimé: " . $file_path);
+                } else {
+                    error_log("Erreur lors de la suppression du cachet: " . $file_path);
+                }
+            }
+            
+            // Mettre à jour la base de données
+            $sql = "UPDATE tblusers SET StampImage=NULL, StampDate=NULL WHERE ID=:uid";
+            $query = $dbh->prepare($sql);
+            $query->bindParam(':uid', $chef_id, PDO::PARAM_STR);
+            $query->execute();
+            
+            echo "<script>alert('Cachet supprimé avec succès !'); window.location.href='stamp-management.php';</script>";
+            exit();
+        }
+    }
     
     // Traitement de l'upload du cachet
     if(isset($_POST['upload_stamp'])) {
@@ -23,33 +55,43 @@ if (strlen($_SESSION['GMScid']) == 0) {
                     mkdir($upload_dir, 0755, true);
                 }
                 
-                $file_extension = pathinfo($_FILES['stamp_file']['name'], PATHINFO_EXTENSION);
-                $new_filename = 'stamp_' . $chef_id . '.' . $file_extension;
-                $upload_path = $upload_dir . $new_filename;
-                
-                // Supprimer l'ancien cachet s'il existe
+                // Supprimer l'ancien cachet avant d'uploader le nouveau
                 $sql = "SELECT StampImage FROM tblusers WHERE ID=:uid";
                 $query = $dbh->prepare($sql);
                 $query->bindParam(':uid', $chef_id, PDO::PARAM_STR);
                 $query->execute();
                 $old_stamp = $query->fetch(PDO::FETCH_OBJ);
                 
-                if($old_stamp && $old_stamp->StampImage) {
-                    $old_file = $upload_dir . $old_stamp->StampImage;
-                    if(file_exists($old_file)) {
-                        unlink($old_file);
+                if($old_stamp && !empty($old_stamp->StampImage)) {
+                    $old_file_path = $upload_dir . $old_stamp->StampImage;
+                    if(file_exists($old_file_path)) {
+                        unlink($old_file_path);
+                        error_log("Ancien cachet supprimé: " . $old_file_path);
                     }
+                }
+                
+                // Ajouter un timestamp pour éviter le cache du navigateur
+                $file_extension = pathinfo($_FILES['stamp_file']['name'], PATHINFO_EXTENSION);
+                $timestamp = time();
+                $new_filename = 'stamp_' . $chef_id . '_' . $timestamp . '.' . $file_extension;
+                $upload_path = $upload_dir . $new_filename;
+                
+                // Vérifier la taille du fichier (5 MB max)
+                if($_FILES['stamp_file']['size'] > 5 * 1024 * 1024) {
+                    echo "<script>alert('Le fichier est trop volumineux ! Taille maximale: 5 MB'); window.location.href='stamp-management.php';</script>";
+                    exit();
                 }
                 
                 if(move_uploaded_file($_FILES['stamp_file']['tmp_name'], $upload_path)) {
                     // Mettre à jour la base de données
-                    $sql = "UPDATE tblusers SET StampImage=:stamp, StampUploadDate=NOW() WHERE ID=:uid";
+                    $sql = "UPDATE tblusers SET StampImage=:stamp, StampDate=NOW() WHERE ID=:uid";
                     $query = $dbh->prepare($sql);
                     $query->bindParam(':stamp', $new_filename, PDO::PARAM_STR);
                     $query->bindParam(':uid', $chef_id, PDO::PARAM_STR);
                     $query->execute();
                     
-                    echo "<script>alert('Cachet officiel enregistré avec succès !'); window.location.href='stamp-management.php';</script>";
+                    echo "<script>alert('Cachet officiel enregistré avec succès !'); window.location.href='stamp-management.php?refresh=" . time() . "';</script>";
+                    exit();
                 } else {
                     echo "<script>alert('Erreur lors du téléchargement du fichier.');</script>";
                 }
@@ -57,39 +99,36 @@ if (strlen($_SESSION['GMScid']) == 0) {
                 echo "<script>alert('Type de fichier non autorisé. Utilisez PNG ou JPEG.');</script>";
             }
         } else {
-            echo "<script>alert('Aucun fichier sélectionné ou erreur lors du téléchargement.');</script>";
-        }
-    }
-    
-    // Supprimer le cachet
-    if(isset($_GET['delete']) && $_GET['delete'] == 1) {
-        $sql = "SELECT StampImage FROM tblusers WHERE ID=:uid";
-        $query = $dbh->prepare($sql);
-        $query->bindParam(':uid', $chef_id, PDO::PARAM_STR);
-        $query->execute();
-        $result = $query->fetch(PDO::FETCH_OBJ);
-        
-        if($result && $result->StampImage) {
-            $file_path = '../assets/stamps/' . $result->StampImage;
-            if(file_exists($file_path)) {
-                unlink($file_path);
+            $error_msg = '';
+            switch($_FILES['stamp_file']['error']) {
+                case UPLOAD_ERR_INI_SIZE:
+                case UPLOAD_ERR_FORM_SIZE:
+                    $error_msg = 'Le fichier est trop volumineux.';
+                    break;
+                case UPLOAD_ERR_NO_FILE:
+                    $error_msg = 'Aucun fichier n\'a été uploadé.';
+                    break;
+                default:
+                    $error_msg = 'Erreur lors de l\'upload : ' . $_FILES['stamp_file']['error'];
             }
-            
-            $sql = "UPDATE tblusers SET StampImage=NULL, StampUploadDate=NULL WHERE ID=:uid";
-            $query = $dbh->prepare($sql);
-            $query->bindParam(':uid', $chef_id, PDO::PARAM_STR);
-            $query->execute();
-            
-            echo "<script>alert('Cachet officiel supprimé avec succès !'); window.location.href='stamp-management.php';</script>";
+            echo "<script>alert('" . $error_msg . "');</script>";
         }
     }
     
-    // Récupérer le cachet actuel
-    $sql = "SELECT StampImage, StampUploadDate, Nom, Prenom, Fonction FROM tblusers WHERE ID=:uid";
+    // Récupérer le cachet actuel avec gestion des colonnes manquantes
+    $sql = "SELECT StampImage, StampDate FROM tblusers WHERE ID=:uid";
     $query = $dbh->prepare($sql);
     $query->bindParam(':uid', $chef_id, PDO::PARAM_STR);
     $query->execute();
-    $chef_data = $query->fetch(PDO::FETCH_OBJ);
+    $user_stamp = $query->fetch(PDO::FETCH_OBJ);
+    
+    // CORRECTION : Initialiser les propriétés si elles n'existent pas
+    if($user_stamp && !isset($user_stamp->StampImage)) {
+        $user_stamp->StampImage = null;
+    }
+    if($user_stamp && !isset($user_stamp->StampDate)) {
+        $user_stamp->StampDate = null;
+    }
 ?>
 
 <!DOCTYPE html>
@@ -103,51 +142,51 @@ if (strlen($_SESSION['GMScid']) == 0) {
     
     <style>
         .stamp-preview {
-            border: 3px dashed #6c757d;
-            border-radius: 12px;
-            padding: 30px;
+            border: 2px dashed #6c757d;
+            border-radius: 8px;
+            padding: 20px;
             background-color: #f8f9fa;
-            min-height: 300px;
+            min-height: 250px;
             display: flex;
             align-items: center;
             justify-content: center;
-            flex-direction: column;
+            position: relative;
         }
         
         .stamp-preview img {
             max-width: 100%;
-            max-height: 250px;
-            border: 2px solid #dee2e6;
+            max-height: 230px;
+            border: 1px solid #ddd;
             padding: 10px;
             background: white;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         
-        .upload-zone {
+        .upload-area {
             border: 3px dashed #007bff;
-            border-radius: 12px;
+            border-radius: 8px;
             padding: 40px;
             text-align: center;
-            background: #f0f8ff;
-            transition: all 0.3s;
+            background-color: #f8f9fa;
             cursor: pointer;
+            transition: all 0.3s;
         }
         
-        .upload-zone:hover {
-            background: #e6f2ff;
+        .upload-area:hover {
+            background-color: #e9ecef;
             border-color: #0056b3;
         }
         
-        .upload-zone.drag-over {
-            background: #cce5ff;
-            border-color: #004085;
+        .upload-area.dragover {
+            background-color: #d4edff;
+            border-color: #0056b3;
         }
         
-        .info-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 12px;
-            padding: 20px;
+        .card {
+            transition: all 0.3s;
+        }
+        
+        .card:hover {
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
         }
     </style>
 </head>
@@ -163,187 +202,129 @@ if (strlen($_SESSION['GMScid']) == 0) {
                 <nav aria-label="breadcrumb">
                     <ol class="breadcrumb">
                         <li class="breadcrumb-item"><a href="dashboard.php">Accueil</a></li>
-                        <li class="breadcrumb-item active">Cachet Officiel</li>
+                        <li class="breadcrumb-item active">Gestion Cachet</li>
                     </ol>
                 </nav>
             </div>
             
-            <!-- Informations du Chef -->
-            <div class="info-card mb-4">
-                <div class="row align-items-center">
-                    <div class="col-md-8">
-                        <h4><i class="fas fa-user-tie"></i> <?php echo htmlentities($chef_data->Nom . ' ' . $chef_data->Prenom); ?></h4>
-                        <p class="mb-0"><strong>Fonction:</strong> <?php echo htmlentities($chef_data->Fonction); ?></p>
-                    </div>
-                    <div class="col-md-4 text-right">
-                        <i class="fas fa-certificate fa-4x opacity-25"></i>
-                    </div>
-                </div>
+            <!-- Fonction actuelle du chef -->
+            <div class="alert alert-info mb-4">
+                <strong>Fonction:</strong> Chef de Département Audit
             </div>
             
             <!-- Cachet actuel -->
-            <?php if($chef_data && $chef_data->StampImage) { ?>
-            <div class="alert alert-success">
-                <div class="row align-items-center">
-                    <div class="col-md-8">
-                        <h5><i class="fas fa-check-circle"></i> Cachet Officiel Enregistré</h5>
-                        <p class="mb-0">
-                            <strong>Date d'enregistrement:</strong> <?php echo date('d/m/Y à H:i', strtotime($chef_data->StampUploadDate)); ?>
-                        </p>
-                        <p class="mb-0 mt-2">
-                            <small class="text-muted">
-                                <i class="fas fa-info-circle"></i> Ce cachet sera automatiquement apposé sur tous les ordres de mission validés.
-                            </small>
-                        </p>
-                    </div>
-                    <div class="col-md-4 text-right">
-                        <a href="?delete=1" class="btn btn-danger" 
-                           onclick="return confirm('Êtes-vous sûr de vouloir supprimer le cachet officiel ?\n\nAttention: Vous ne pourrez plus valider de missions tant qu\'un nouveau cachet n\'est pas téléchargé.')">
-                            <i class="fas fa-trash"></i> Supprimer le Cachet
-                        </a>
+            <?php if($user_stamp && !empty($user_stamp->StampImage)) { 
+                // Ajouter timestamp à l'URL pour éviter le cache
+                $cache_buster = '?v=' . time();
+                
+                // CORRECTION : Vérifier si StampDate existe et n'est pas null
+                $display_date = '01/01/1970 à 01:00';
+                if(!empty($user_stamp->StampDate)) {
+                    $display_date = date('d/m/Y à H:i', strtotime($user_stamp->StampDate));
+                }
+            ?>
+            <div class="card border-success mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="fas fa-check-circle"></i> Cachet Officiel Enregistré</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <p><strong>Date d'enregistrement:</strong> <?php echo htmlentities($display_date); ?></p>
+                            <p class="text-muted">Ce cachet sera automatiquement apposé sur tous les ordres de mission validés.</p>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <div class="stamp-preview">
+                                <img src="../assets/stamps/<?php echo htmlentities($user_stamp->StampImage . $cache_buster); ?>" 
+                                     alt="Cachet Officiel" 
+                                     id="current-stamp-image">
+                            </div>
+                            <button onclick="confirmDelete()" class="btn btn-danger btn-sm mt-3">
+                                <i class="fas fa-trash"></i> Supprimer le Cachet
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
             <?php } else { ?>
             <div class="alert alert-warning">
-                <h5><i class="fas fa-exclamation-triangle"></i> Aucun Cachet Officiel Enregistré</h5>
-                <p class="mb-0">
-                    Vous devez télécharger le cachet officiel pour pouvoir valider les demandes de mission. 
-                    La signature manuscrite sera demandée lors de chaque validation.
-                </p>
+                <i class="fas fa-exclamation-triangle"></i> 
+                Aucun cachet officiel enregistré. Veuillez uploader votre cachet ci-dessous.
             </div>
             <?php } ?>
             
-            <div class="row">
-                <!-- Aperçu du cachet -->
-                <div class="col-lg-6 mb-4">
-                    <div class="card h-100">
-                        <div class="card-header bg-primary text-white">
-                            <h5 class="mb-0"><i class="fas fa-eye"></i> Aperçu du Cachet Actuel</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="stamp-preview">
-                                <?php if($chef_data && $chef_data->StampImage) { ?>
-                                    <img src="../assets/stamps/<?php echo htmlentities($chef_data->StampImage); ?>" 
-                                         alt="Cachet officiel">
-                                    <p class="mt-3 text-muted">
-                                        <small><?php echo htmlentities($chef_data->StampImage); ?></small>
-                                    </p>
-                                <?php } else { ?>
-                                    <i class="fas fa-stamp fa-5x text-muted mb-3"></i>
-                                    <p class="text-muted">Aucun cachet enregistré</p>
-                                <?php } ?>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Upload du cachet -->
-                <div class="col-lg-6 mb-4">
-                    <div class="card h-100">
-                        <div class="card-header bg-success text-white">
-                            <h5 class="mb-0">
-                                <i class="fas fa-cloud-upload-alt"></i> 
-                                <?php echo ($chef_data && $chef_data->StampImage) ? 'Remplacer' : 'Télécharger'; ?> le Cachet Officiel
-                            </h5>
-                        </div>
-                        <div class="card-body">
-                            <form method="POST" enctype="multipart/form-data" id="upload-stamp-form">
-                                <div class="upload-zone" id="upload-zone">
-                                    <i class="fas fa-cloud-upload-alt fa-4x text-primary mb-3"></i>
-                                    <h5>Glissez-déposez le fichier ici</h5>
-                                    <p class="text-muted">ou cliquez pour sélectionner</p>
-                                    <input type="file" class="d-none" id="stamp_file" name="stamp_file" 
-                                           accept="image/png,image/jpeg,image/jpg" required>
-                                </div>
-                                
-                                <div id="file-info" class="mt-3 d-none">
-                                    <div class="alert alert-info">
-                                        <strong><i class="fas fa-file-image"></i> Fichier sélectionné:</strong>
-                                        <span id="file-name"></span>
-                                        <br>
-                                        <small>Taille: <span id="file-size"></span></small>
-                                    </div>
-                                </div>
-                                
-                                <div class="alert alert-info mt-3">
-                                    <h6><i class="fas fa-info-circle"></i> Recommandations:</h6>
-                                    <ul class="mb-0 pl-3">
-                                        <li>Utilisez une image PNG avec fond transparent pour un meilleur rendu</li>
-                                        <li>Résolution recommandée: 300 DPI minimum</li>
-                                        <li>Taille maximale: 5 MB</li>
-                                        <li>Le cachet doit inclure le logo et la signature officielle</li>
-                                        <li>Format carré ou rectangulaire (ratio 1:1 ou 4:3)</li>
-                                    </ul>
-                                </div>
-                                
-                                <button type="submit" name="upload_stamp" class="btn btn-success btn-block btn-lg mt-3">
-                                    <i class="fas fa-save"></i> Enregistrer le Cachet Officiel
-                                </button>
-                            </form>
-                            
-                            <div class="mt-4 p-3 bg-light rounded">
-                                <h6 class="text-primary"><i class="fas fa-question-circle"></i> Comment obtenir le cachet?</h6>
-                                <ol class="mb-0 small">
-                                    <li>Scannez le document officiel avec le cachet</li>
-                                    <li>Ou photographiez-le avec un bon éclairage</li>
-                                    <li>Utilisez un outil pour supprimer le fond (optionnel mais recommandé)</li>
-                                    <li>Enregistrez en format PNG pour conserver la transparence</li>
-                                </ol>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Exemple de rendu dans le PDF -->
+            <!-- Formulaire d'upload -->
             <div class="card">
-                <div class="card-header bg-info text-white">
-                    <h5 class="mb-0"><i class="fas fa-file-pdf"></i> Aperçu dans l'Ordre de Mission</h5>
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-cloud-upload-alt"></i> 
+                        <?php echo ($user_stamp && !empty($user_stamp->StampImage)) ? 'Remplacer le Cachet Officiel' : 'Enregistrer le Cachet Officiel'; ?>
+                    </h5>
                 </div>
                 <div class="card-body">
-                    <p class="text-muted">
-                        Voici comment la signature et le cachet apparaîtront dans le PDF généré:
-                    </p>
-                    
-                    <div class="p-4 border rounded bg-white" style="max-width: 600px; margin: 0 auto;">
-                        <p class="text-right mb-2"><em>Fait à El-Hamiz, le <?php echo date('d/m/Y'); ?>.</em></p>
-                        <p class="text-right font-weight-bold mb-2">La Directrice des Ressources Humaines</p>
-                        <p class="text-right font-weight-bold mb-3">et des Moyens Généraux</p>
-                        
-                        <div class="text-right">
-                            <div style="display: inline-block; position: relative;">
-                                <?php if($chef_data && $chef_data->StampImage) { ?>
-                                <img src="../assets/stamps/<?php echo htmlentities($chef_data->StampImage); ?>" 
-                                     alt="Cachet" style="max-width: 150px; opacity: 0.9;">
-                                <?php } else { ?>
-                                <div class="border border-danger p-3 text-danger">
-                                    <i class="fas fa-stamp fa-2x"></i>
-                                    <p class="small mb-0">Cachet Officiel</p>
+                    <form method="POST" enctype="multipart/form-data" id="stamp-upload-form">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="upload-area" id="upload-area">
+                                    <i class="fas fa-cloud-upload-alt fa-4x text-primary mb-3"></i>
+                                    <h5>Glissez-déposez le fichier ici</h5>
+                                    <p class="text-muted mb-3">ou cliquez pour sélectionner</p>
+                                    <input type="file" 
+                                           class="d-none" 
+                                           id="stamp_file" 
+                                           name="stamp_file" 
+                                           accept="image/png,image/jpeg,image/jpg" 
+                                           required>
+                                    <button type="button" class="btn btn-primary" id="select-file-btn">
+                                        <i class="fas fa-folder-open"></i> Sélectionner un Fichier
+                                    </button>
                                 </div>
-                                <?php } ?>
-                                <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">
-                                    <div class="text-center p-2" style="background: rgba(255,255,255,0.7); border: 2px dashed #007bff;">
-                                        <p class="small mb-0" style="font-family: 'Brush Script MT', cursive; font-size: 20px; color: #000;">
-                                            Signature
-                                        </p>
-                                        <small class="text-muted">(lors de validation)</small>
+                                
+                                <div class="mt-3" id="file-info" style="display: none;">
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-file-image"></i> 
+                                        <strong>Fichier sélectionné:</strong> <span id="file-name"></span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-6">
+                                <div class="stamp-preview" id="preview-container">
+                                    <div class="text-center text-muted">
+                                        <i class="fas fa-image fa-4x mb-3"></i>
+                                        <p>Aperçu du cachet</p>
                                     </div>
                                 </div>
                             </div>
                         </div>
                         
-                        <p class="text-right font-weight-bold text-decoration-underline mt-3">
-                            <?php echo htmlentities(mb_substr($chef_data->Prenom, 0, 1) . '. ' . strtoupper($chef_data->Nom)); ?>
-                        </p>
+                        <div class="mt-4">
+                            <button type="submit" name="upload_stamp" class="btn btn-success btn-lg btn-block" id="submit-btn" disabled>
+                                <i class="fas fa-save"></i> Enregistrer le Cachet Officiel
+                            </button>
+                        </div>
+                    </form>
+                    
+                    <div class="alert alert-info mt-4">
+                        <h6><i class="fas fa-info-circle"></i> Recommandations:</h6>
+                        <ul class="mb-0">
+                            <li>Utilisez une image PNG avec fond transparent pour un meilleur rendu</li>
+                            <li>Résolution recommandée: 300 DPI minimum</li>
+                            <li>Taille maximale: 5 MB</li>
+                            <li>Le cachet doit inclure le logo et la signature officielle</li>
+                            <li>Format carré ou rectangulaire (ratio 1:1 ou 4:3)</li>
+                        </ul>
                     </div>
                     
-                    <p class="text-center mt-3">
-                        <small class="text-muted">
-                            <i class="fas fa-info-circle"></i> 
-                            La signature manuscrite sera superposée au cachet lors de la validation
-                        </small>
-                    </p>
+                    <div class="alert alert-secondary mt-3">
+                        <h6><i class="fas fa-question-circle"></i> Comment obtenir le cachet?</h6>
+                        <ol class="mb-0">
+                            <li>Scannez le document officiel avec le cachet</li>
+                            <li>Ou photographiez-le avec un bon éclairage</li>
+                            <li>Utilisez un outil pour supprimer le fond (optionnel mais recommandé)</li>
+                            <li>Enregistrez en format PNG pour conserver la transparence</li>
+                        </ol>
+                    </div>
                 </div>
             </div>
         </div>
@@ -353,83 +334,126 @@ if (strlen($_SESSION['GMScid']) == 0) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
-    $(document).ready(function() {
-        const uploadZone = $('#upload-zone');
-        const fileInput = $('#stamp_file');
-        const fileInfo = $('#file-info');
-        const fileName = $('#file-name');
-        const fileSize = $('#file-size');
+    // CORRECTION MAJEURE : Éviter la récursion infinie de jQuery
+    (function($) {
+        'use strict';
         
-        // Click sur la zone pour ouvrir le sélecteur
-        uploadZone.click(function() {
+        const fileInput = document.getElementById('stamp_file');
+        const uploadArea = document.getElementById('upload-area');
+        const previewContainer = document.getElementById('preview-container');
+        const fileInfo = document.getElementById('file-info');
+        const fileName = document.getElementById('file-name');
+        const submitBtn = document.getElementById('submit-btn');
+        const selectFileBtn = document.getElementById('select-file-btn');
+        
+        // CORRECTION : Utiliser des événements natifs au lieu de jQuery pour éviter la récursion
+        selectFileBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
             fileInput.click();
         });
         
-        // Changement de fichier
-        fileInput.change(function() {
-            const file = this.files[0];
-            if(file) {
-                displayFileInfo(file);
+        uploadArea.addEventListener('click', function(e) {
+            // Ne déclencher que si on ne clique pas sur le bouton
+            if(e.target !== selectFileBtn && !selectFileBtn.contains(e.target)) {
+                fileInput.click();
+            }
+        });
+        
+        // Gestion du changement de fichier
+        fileInput.addEventListener('change', function() {
+            if(this.files.length > 0) {
+                handleFile(this.files[0]);
             }
         });
         
         // Drag & Drop
-        uploadZone.on('dragover', function(e) {
+        uploadArea.addEventListener('dragover', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            $(this).addClass('drag-over');
+            this.classList.add('dragover');
         });
         
-        uploadZone.on('dragleave', function(e) {
+        uploadArea.addEventListener('dragleave', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            $(this).removeClass('drag-over');
+            this.classList.remove('dragover');
         });
         
-        uploadZone.on('drop', function(e) {
+        uploadArea.addEventListener('drop', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            $(this).removeClass('drag-over');
+            this.classList.remove('dragover');
             
-            const files = e.originalEvent.dataTransfer.files;
+            const files = e.dataTransfer.files;
             if(files.length > 0) {
-                fileInput[0].files = files;
-                displayFileInfo(files[0]);
+                // Assigner manuellement le fichier à l'input
+                const dt = new DataTransfer();
+                dt.items.add(files[0]);
+                fileInput.files = dt.files;
+                handleFile(files[0]);
             }
         });
         
-        function displayFileInfo(file) {
+        function handleFile(file) {
+            if(!file) return;
+            
             // Vérifier le type
             const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg'];
             if(!allowedTypes.includes(file.type)) {
-                alert('Type de fichier non autorisé! Utilisez PNG ou JPEG.');
-                fileInput.val('');
+                alert('Type de fichier non autorisé ! Utilisez PNG, JPG ou JPEG.');
+                fileInput.value = '';
                 return;
             }
             
-            // Vérifier la taille (5 MB max)
+            // Vérifier la taille (5 MB)
             if(file.size > 5 * 1024 * 1024) {
-                alert('Fichier trop volumineux! Taille maximale: 5 MB');
-                fileInput.val('');
+                alert('Le fichier est trop volumineux ! Taille maximale: 5 MB');
+                fileInput.value = '';
                 return;
             }
             
-            fileName.text(file.name);
-            fileSize.text((file.size / 1024).toFixed(2) + ' KB');
-            fileInfo.removeClass('d-none');
+            // Afficher le nom du fichier
+            fileName.textContent = file.name;
+            fileInfo.style.display = 'block';
+            
+            // Activer le bouton submit
+            submitBtn.disabled = false;
+            
+            // Prévisualisation
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                previewContainer.innerHTML = '<img src="' + event.target.result + '" alt="Aperçu du cachet">';
+            };
+            reader.readAsDataURL(file);
         }
         
-        // Validation avant envoi
-        $('#upload-stamp-form').submit(function(e) {
-            if(!fileInput[0].files.length) {
-                alert('Veuillez sélectionner un fichier!');
+        // Confirmation avant suppression
+        window.confirmDelete = function() {
+            if(confirm('Êtes-vous sûr de vouloir supprimer ce cachet officiel ?\n\nCette action est irréversible !')) {
+                window.location.href = 'stamp-management.php?delete=1';
+            }
+        };
+        
+        // Confirmation avant upload
+        document.getElementById('stamp-upload-form').addEventListener('submit', function(e) {
+            if(!fileInput.files.length) {
+                alert('Veuillez sélectionner un fichier !');
                 e.preventDefault();
                 return false;
             }
             
-            return confirm('Êtes-vous sûr de vouloir enregistrer ce cachet officiel?\n\nCe cachet sera utilisé pour tous les ordres de mission que vous validerez.');
+            return confirm('Êtes-vous sûr de vouloir enregistrer ce cachet ?\n\nIl remplacera l\'ancien cachet s\'il existe.');
         });
-    });
+        
+        // Forcer le rechargement de l'image actuelle sans cache
+        const currentStampImage = document.getElementById('current-stamp-image');
+        if(currentStampImage) {
+            const src = currentStampImage.src.split('?')[0];
+            currentStampImage.src = src + '?v=' + new Date().getTime();
+        }
+        
+    })(jQuery);
     </script>
 </body>
 </html>
