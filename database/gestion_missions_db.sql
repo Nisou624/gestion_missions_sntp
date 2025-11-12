@@ -48,6 +48,7 @@ INSERT INTO `tblusers` (`ID`, `Nom`, `Prenom`, `Email`, `Fonction`, `Departement
 CREATE TABLE `tblmissions` (
   `ID` int(10) NOT NULL,
   `UserID` int(5) NOT NULL,
+  `SubmittedBy` int(5) DEFAULT NULL,
   `ReferenceNumber` varchar(50) DEFAULT NULL,
   `NomPrenom` varchar(400) DEFAULT NULL,
   `Fonction` varchar(200) DEFAULT NULL,
@@ -70,9 +71,9 @@ CREATE TABLE `tblmissions` (
 -- Déchargement des données de la table `tblmissions`
 --
 
-INSERT INTO `tblmissions` (`ID`, `UserID`, `ReferenceNumber`, `NomPrenom`, `Fonction`, `VilleDepart`, `DateDepart`, `Destinations`, `ItineraireType`, `MotifDeplacement`, `MoyenTransport`, `DateRetour`, `Observations`, `Status`, `Remarque`, `ValidatedBy`, `DateCreation`, `DateValidation`) VALUES
-(1, 3, '2025-001', 'TEMMAR Arezki', 'Auditeur en Chef', 'Alger', '2025-01-15', 'El-Oued, Djanet', 'Circuit avec escales', 'Audit technique des installations', 'Véhicule de service', '2025-01-20', "Mission d'audit des nouvelles installations", 'validee', 'Mission approuvée par la direction', 2, '2025-01-10 08:00:00', '2025-01-12 09:30:00'),
-(2, 4, '2025-002', 'BENALI Karim', 'Ingénieur Travaux', 'Alger', '2025-01-25', 'Oran', 'Aller-retour', 'Formation technique', 'Avion', '2025-01-27', 'Formation sur nouveaux équipements', 'en_attente', NULL, NULL, '2025-01-20 10:15:00', NULL);
+INSERT INTO `tblmissions` (`ID`, `UserID`, `SubmittedBy`, `ReferenceNumber`, `NomPrenom`, `Fonction`, `VilleDepart`, `DateDepart`, `Destinations`, `ItineraireType`, `MotifDeplacement`, `MoyenTransport`, `DateRetour`, `Observations`, `Status`, `Remarque`, `ValidatedBy`, `DateCreation`, `DateValidation`) VALUES
+(1, 3, 3, '2025-001', 'TEMMAR Arezki', 'Auditeur en Chef', 'Alger', '2025-01-15', 'El-Oued, Djanet', 'Circuit avec escales', 'Audit technique des installations', 'Véhicule de service', '2025-01-20', "Mission d'audit des nouvelles installations", 'validee', 'Mission approuvée par la direction', 2, '2025-01-10 08:00:00', '2025-01-12 09:30:00'),
+(2, 4, 4, '2025-002', 'BENALI Karim', 'Ingénieur Travaux', 'Alger', '2025-01-25', 'Oran', 'Aller-retour', 'Formation technique', 'Avion', '2025-01-27', 'Formation sur nouveaux équipements', 'en_attente', NULL, NULL, '2025-01-20 10:15:00', NULL);
 
 -- --------------------------------------------------------
 
@@ -140,7 +141,8 @@ ALTER TABLE `tblusers`
 ALTER TABLE `tblmissions`
   ADD PRIMARY KEY (`ID`),
   ADD KEY `UserID` (`UserID`),
-  ADD KEY `ValidatedBy` (`ValidatedBy`);
+  ADD KEY `ValidatedBy` (`ValidatedBy`),
+  ADD KEY `SubmittedBy` (`SubmittedBy`);
 
 --
 -- Index pour la table `tblmission_destinations`
@@ -194,7 +196,8 @@ ALTER TABLE `tblmission_validations`
 --
 ALTER TABLE `tblmissions`
   ADD CONSTRAINT `tblmissions_ibfk_1` FOREIGN KEY (`UserID`) REFERENCES `tblusers` (`ID`),
-  ADD CONSTRAINT `tblmissions_ibfk_2` FOREIGN KEY (`ValidatedBy`) REFERENCES `tblusers` (`ID`);
+  ADD CONSTRAINT `tblmissions_ibfk_2` FOREIGN KEY (`ValidatedBy`) REFERENCES `tblusers` (`ID`),
+  ADD CONSTRAINT `tblmissions_ibfk_3` FOREIGN KEY (`SubmittedBy`) REFERENCES `tblusers` (`ID`);
 
 --
 -- Contraintes pour la table `tblmission_destinations`
