@@ -39,9 +39,9 @@
             <a class="nav-link text-white" href="statistics.php">
                 <i class="fas fa-chart-line"></i> Statistiques
             </a>
-            <a href="signature-management.php" class="nav-link">
-              <i class="fas fa-signature"></i>
-              <span>Ma Signature</span>
+            <a href="stamp-management.php" class="nav-link">
+              <i class="fas fa-stamp"></i>
+              <span>Mon Cachet</span>
             </a>
         </div>
     </nav>

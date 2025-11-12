@@ -22,15 +22,15 @@ if (!isset($_SESSION['GMSuid']) || strlen($_SESSION['GMSuid']) == 0) {
 function generateReferenceNumber() {
     global $dbh;
     $year = date('Y');
-    $month = date('m');
     $sequence = 1;
     
     try {
-        $sql = "SELECT MAX(CAST(SUBSTRING(ReferenceNumber, 8) AS UNSIGNED)) as max_seq 
+        // Récupérer le dernier numéro de séquence pour l'année en cours
+        $sql = "SELECT MAX(CAST(SUBSTRING_INDEX(ReferenceNumber, '-', -1) AS UNSIGNED)) as max_seq 
                 FROM tblmissions 
                 WHERE ReferenceNumber LIKE :pattern";
         $query = $dbh->prepare($sql);
-        $pattern = $year . '-' . $month . '-%';
+        $pattern = $year . '-%';
         $query->bindParam(':pattern', $pattern, PDO::PARAM_STR);
         $query->execute();
         
@@ -39,11 +39,14 @@ function generateReferenceNumber() {
             $sequence = ($result->max_seq ?? 0) + 1;
         }
         
-        return $year . '-' . $month . '-' . str_pad($sequence, 3, '0', STR_PAD_LEFT);
+        // Format: ANNÉE-XXX (ex: 2025-001, 2025-038)
+        return $year . '-' . str_pad($sequence, 3, '0', STR_PAD_LEFT);
     } catch(Exception $e) {
-        return $year . '-' . $month . '-001';
+        // En cas d'erreur, retourner le premier numéro de l'année
+        return $year . '-001';
     }
 }
+
 
 // Données pour les listes
 $motifs_mission = array(

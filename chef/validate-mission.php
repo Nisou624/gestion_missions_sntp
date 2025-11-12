@@ -5,8 +5,17 @@ include('../includes/config.php');
 
 if (strlen($_SESSION['GMScid']) == 0) {
     header('location:logout.php');
+    exit();
 } else {
     $mid = intval($_GET['mid']);
+    $chef_id = $_SESSION['GMScid'];
+    
+    // Vérifier si le chef a un cachet enregistré
+    $sql = "SELECT StampImage FROM tblusers WHERE ID=:uid";
+    $query = $dbh->prepare($sql);
+    $query->bindParam(':uid', $chef_id, PDO::PARAM_STR);
+    $query->execute();
+    $chef_stamp = $query->fetch(PDO::FETCH_OBJ);
     
     if(isset($_POST['validate_mission'])) {
         $action = $_POST['action'];
@@ -14,31 +23,58 @@ if (strlen($_SESSION['GMScid']) == 0) {
         $validator_id = $_SESSION['GMScid'];
         
         try {
-            // Commencer la transaction
             $dbh->beginTransaction();
             
+            // Gérer la signature manuscrite (obligatoire pour validation)
+            $signature_filename = null;
+            $stamp_filename = null;
+            
+            if($action == 'validee') {
+                // Vérifier qu'une signature a été fournie
+                if(empty($_POST['signature_data'])) {
+                    throw new Exception('La signature est obligatoire pour valider une mission!');
+                }
+                
+                // Enregistrer la signature dessinée
+                $signature_data = $_POST['signature_data'];
+                $image_data = str_replace('data:image/png;base64,', '', $signature_data);
+                $image_data = str_replace(' ', '+', $image_data);
+                $decoded_image = base64_decode($image_data);
+                
+                $upload_dir = '../assets/signatures/';
+                if(!is_dir($upload_dir)) {
+                    mkdir($upload_dir, 0755, true);
+                }
+                
+                $signature_filename = 'signature_mission_' . $mid . '_' . time() . '.png';
+                if(!file_put_contents($upload_dir . $signature_filename, $decoded_image)) {
+                    throw new Exception('Erreur lors de l\'enregistrement de la signature');
+                }
+                
+                // Récupérer le cachet du chef
+                if($chef_stamp && $chef_stamp->StampImage) {
+                    $stamp_filename = $chef_stamp->StampImage;
+                }
+            }
+            
             // Mettre à jour le statut de la mission
-            $sql = "UPDATE tblmissions SET Status=:status, Remarque=:remarque, ValidatedBy=:validator_id, DateValidation=NOW() WHERE ID=:mid";
+            $sql = "UPDATE tblmissions SET 
+                    Status=:status, 
+                    Remarque=:remarque, 
+                    ValidatedBy=:validator_id, 
+                    DateValidation=NOW(),
+                    SignaturePath=:signature,
+                    StampPath=:stamp
+                    WHERE ID=:mid";
             $query = $dbh->prepare($sql);
             $query->bindParam(':status', $action, PDO::PARAM_STR);
             $query->bindParam(':remarque', $commentaire, PDO::PARAM_STR);
             $query->bindParam(':validator_id', $validator_id, PDO::PARAM_STR);
+            $query->bindParam(':signature', $signature_filename, PDO::PARAM_STR);
+            $query->bindParam(':stamp', $stamp_filename, PDO::PARAM_STR);
             $query->bindParam(':mid', $mid, PDO::PARAM_STR);
             $query->execute();
             
-            // Enregistrer la validation dans l'historique
-            $sql = "INSERT INTO tblmission_validations(MissionID, ValidatorID, Action, Commentaire, SignaturePath) 
-                    VALUES(:mid, :validator_id, :action, :commentaire, :signature)";
-            $query = $dbh->prepare($sql);
-            $signature_path = 'assets/signatures/signature_' . $validator_id . '.png';
-            $query->bindParam(':mid', $mid, PDO::PARAM_STR);
-            $query->bindParam(':validator_id', $validator_id, PDO::PARAM_STR);
-            $query->bindParam(':action', $action, PDO::PARAM_STR);
-            $query->bindParam(':commentaire', $commentaire, PDO::PARAM_STR);
-            $query->bindParam(':signature', $signature_path, PDO::PARAM_STR);
-            $query->execute();
-            
-            // Valider la transaction
             $dbh->commit();
             
             $message = ($action == 'validee') ? 'Mission validée avec succès !' : 'Mission rejetée avec succès !';
@@ -46,9 +82,9 @@ if (strlen($_SESSION['GMScid']) == 0) {
                 alert('$message');
                 window.location.href='pending-missions.php';
             </script>";
+            exit();
             
         } catch(Exception $e) {
-            // Annuler la transaction en cas d'erreur
             $dbh->rollback();
             echo "<script>alert('Erreur lors de la validation: " . $e->getMessage() . "');</script>";
         }
@@ -63,6 +99,34 @@ if (strlen($_SESSION['GMScid']) == 0) {
     <title>Validation Mission - Système de Gestion des Missions</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        .signature-canvas {
+            border: 3px solid #007bff;
+            border-radius: 8px;
+            background-color: #ffffff;
+            cursor: crosshair;
+            touch-action: none;
+            width: 100%;
+        }
+        
+        .stamp-overlay {
+            position: relative;
+            min-height: 250px;
+            border: 2px dashed #6c757d;
+            border-radius: 8px;
+            background: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .stamp-overlay img {
+            max-width: 200px;
+            max-height: 200px;
+            opacity: 0.3;
+        }
+    </style>
 </head>
 <body>
     <?php include_once('includes/sidebar.php'); ?>
@@ -83,6 +147,21 @@ if (strlen($_SESSION['GMScid']) == 0) {
             </div>
             
             <?php
+            // Vérifier si le chef a un cachet
+            if(!$chef_stamp || !$chef_stamp->StampImage) {
+            ?>
+            <div class="alert alert-danger">
+                <h5><i class="fas fa-exclamation-triangle"></i> Cachet Officiel Manquant!</h5>
+                <p>Vous devez d'abord enregistrer votre cachet officiel avant de pouvoir valider des missions.</p>
+                <a href="stamp-management.php" class="btn btn-warning">
+                    <i class="fas fa-stamp"></i> Gérer le Cachet Officiel
+                </a>
+            </div>
+            <?php
+                echo "</div></div></body></html>";
+                exit();
+            }
+            
             $sql = "SELECT m.*, u.Nom, u.Prenom, u.Email, u.MobileNumber, u.Departement, u.Fonction as UserFonction
                     FROM tblmissions m 
                     JOIN tblusers u ON m.UserID = u.ID 
@@ -174,7 +253,7 @@ if (strlen($_SESSION['GMScid']) == 0) {
                             <h5><i class="fas fa-signature"></i> Validation Électronique</h5>
                         </div>
                         <div class="card-body">
-                            <form method="POST" id="validationForm">
+                            <form method="POST" id="validationForm" action="">
                                 <div class="form-group">
                                     <label for="action">Décision de Validation <span class="text-danger">*</span>:</label>
                                     <select name="action" id="action" class="form-control" required>
@@ -186,21 +265,21 @@ if (strlen($_SESSION['GMScid']) == 0) {
                                 
                                 <div class="form-group">
                                     <label for="commentaire">Commentaire/Remarque:</label>
-                                    <textarea name="commentaire" id="commentaire" class="form-control" rows="4" 
+                                    <textarea name="commentaire" id="commentaire" class="form-control" rows="3" 
                                             placeholder="Ajoutez vos commentaires ou remarques..."></textarea>
-                                    <small class="form-text text-muted">
-                                        Ce commentaire sera visible par le demandeur.
-                                    </small>
                                 </div>
+                                
+                                <input type="hidden" name="signature_data" id="signature_data_hidden" value="">
+                                <input type="hidden" name="validate_mission" value="1">
                                 
                                 <div class="alert alert-info">
                                     <i class="fas fa-info-circle"></i>
                                     <small>
-                                        En validant, vous apposez votre signature électronique sur cet ordre de mission.
+                                        Vous devrez signer manuellement avant la validation.
                                     </small>
                                 </div>
                                 
-                                <button type="submit" name="validate_mission" class="btn btn-success btn-block btn-lg">
+                                <button type="button" class="btn btn-success btn-block btn-lg" id="open-signature-modal">
                                     <i class="fas fa-signature"></i> Signer et Valider
                                 </button>
                                 
@@ -208,29 +287,6 @@ if (strlen($_SESSION['GMScid']) == 0) {
                                     <i class="fas fa-arrow-left"></i> Retour à la Liste
                                 </a>
                             </form>
-                        </div>
-                    </div>
-                    
-                    <div class="card mt-3">
-                        <div class="card-header">
-                            <h6><i class="fas fa-clock"></i> Informations Temporelles</h6>
-                        </div>
-                        <div class="card-body">
-                            <?php
-                            $dateDepart = new DateTime($mission->DateDepart);
-                            $aujourd_hui = new DateTime();
-                            $diff = $dateDepart->diff($aujourd_hui);
-                            
-                            if($dateDepart > $aujourd_hui) {
-                                echo '<p class="text-success"><i class="fas fa-calendar-check"></i> Mission dans <strong>'.$diff->days.' jours</strong></p>';
-                            } else {
-                                echo '<p class="text-danger"><i class="fas fa-exclamation-triangle"></i> Mission prévue il y a <strong>'.$diff->days.' jours</strong></p>';
-                            }
-                            
-                            $dateCreation = new DateTime($mission->DateCreation);
-                            $diffCreation = $aujourd_hui->diff($dateCreation);
-                            echo '<p class="text-muted"><i class="fas fa-file"></i> Demande créée il y a <strong>'.$diffCreation->days.' jour(s)</strong></p>';
-                            ?>
                         </div>
                     </div>
                 </div>
@@ -245,11 +301,272 @@ if (strlen($_SESSION['GMScid']) == 0) {
         </div>
     </div>
     
+    <!-- Modal de Signature -->
+    <div class="modal fade" id="signatureModal" tabindex="-1" role="dialog" data-backdrop="static" data-keyboard="false">
+        <div class="modal-dialog modal-xl" role="document">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">
+                        <i class="fas fa-signature"></i> Signature Manuscrite Obligatoire
+                    </h5>
+                    <button type="button" class="close text-white" data-dismiss="modal">
+                        <span>&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <strong>Important:</strong> Signez dans le cadre ci-dessous. Votre signature sera apposée sur le cachet officiel dans le PDF généré.
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-7">
+                            <h6>Dessinez votre signature:</h6>
+                            <canvas id="signature-pad-modal" class="signature-canvas" width="700" height="300"></canvas>
+                            <div class="mt-2 d-flex justify-content-between align-items-center">
+                                <div>
+                                    <label class="mr-2"><i class="fas fa-pen"></i> Épaisseur:</label>
+                                    <input type="range" id="stroke-width-modal" min="1" max="6" value="3" style="width: 120px;">
+                                    <span id="stroke-value-modal" class="badge badge-primary">3</span>px
+                                </div>
+                                <button type="button" class="btn btn-warning" id="clear-signature-modal">
+                                    <i class="fas fa-eraser"></i> Effacer
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-5">
+                            <h6>Aperçu avec le cachet officiel:</h6>
+                            <div class="stamp-overlay" id="preview-overlay">
+                                <?php if($chef_stamp && $chef_stamp->StampImage) { ?>
+                                <img src="../assets/stamps/<?php echo htmlentities($chef_stamp->StampImage); ?>" 
+                                     alt="Cachet" id="stamp-preview">
+                                <?php } ?>
+                                <canvas id="preview-canvas" 
+                                        style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;">
+                                </canvas>
+                            </div>
+                            <p class="text-center mt-2">
+                                <small class="text-muted">
+                                    <i class="fas fa-info-circle"></i> 
+                                    Aperçu du rendu final dans le PDF
+                                </small>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">
+                        <i class="fas fa-times"></i> Annuler
+                    </button>
+                    <button type="button" class="btn btn-success btn-lg" id="confirm-signature">
+                        <i class="fas fa-check-circle"></i> Confirmer la Signature et Valider
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
     $(document).ready(function() {
+        const canvas = document.getElementById('signature-pad-modal');
+        const ctx = canvas ? canvas.getContext('2d') : null;
+        const previewCanvas = document.getElementById('preview-canvas');
+        const previewCtx = previewCanvas ? previewCanvas.getContext('2d') : null;
+        const strokeWidthInput = document.getElementById('stroke-width-modal');
+        const strokeValueDisplay = document.getElementById('stroke-value-modal');
+        
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        let strokeWidth = 3;
+        let hasDrawn = false;
+        let signaturePaths = [];
+        
+        if(ctx) {
+            ctx.strokeStyle = '#000080';
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.lineWidth = strokeWidth;
+            
+            if(previewCtx) {
+                previewCanvas.width = previewCanvas.offsetWidth;
+                previewCanvas.height = previewCanvas.offsetHeight;
+                previewCtx.strokeStyle = '#000080';
+                previewCtx.lineJoin = 'round';
+                previewCtx.lineCap = 'round';
+            }
+            
+            strokeWidthInput.addEventListener('input', function() {
+                strokeWidth = this.value;
+                strokeValueDisplay.textContent = this.value;
+                ctx.lineWidth = strokeWidth;
+            });
+            
+            function startDrawing(e) {
+                isDrawing = true;
+                hasDrawn = true;
+                const rect = canvas.getBoundingClientRect();
+                lastX = e.clientX - rect.left;
+                lastY = e.clientY - rect.top;
+                signaturePaths.push({type: 'start', x: lastX, y: lastY, width: strokeWidth});
+            }
+            
+            function draw(e) {
+                if (!isDrawing) return;
+                const rect = canvas.getBoundingClientRect();
+                const currentX = e.clientX - rect.left;
+                const currentY = e.clientY - rect.top;
+                
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(currentX, currentY);
+                ctx.stroke();
+                
+                signaturePaths.push({type: 'draw', x: currentX, y: currentY});
+                [lastX, lastY] = [currentX, currentY];
+                updatePreview();
+            }
+            
+            function stopDrawing() {
+                if(isDrawing) signaturePaths.push({type: 'end'});
+                isDrawing = false;
+            }
+            
+            canvas.addEventListener('mousedown', startDrawing);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', stopDrawing);
+            canvas.addEventListener('mouseout', stopDrawing);
+            
+            function startDrawingTouch(e) {
+                e.preventDefault();
+                isDrawing = true;
+                hasDrawn = true;
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                lastX = touch.clientX - rect.left;
+                lastY = touch.clientY - rect.top;
+                signaturePaths.push({type: 'start', x: lastX, y: lastY, width: strokeWidth});
+            }
+            
+            function drawTouch(e) {
+                e.preventDefault();
+                if (!isDrawing) return;
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                const currentX = touch.clientX - rect.left;
+                const currentY = touch.clientY - rect.top;
+                
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(currentX, currentY);
+                ctx.stroke();
+                
+                signaturePaths.push({type: 'draw', x: currentX, y: currentY});
+                [lastX, lastY] = [currentX, currentY];
+                updatePreview();
+            }
+            
+            function stopDrawingTouch(e) {
+                e.preventDefault();
+                if(isDrawing) signaturePaths.push({type: 'end'});
+                isDrawing = false;
+            }
+            
+            canvas.addEventListener('touchstart', startDrawingTouch);
+            canvas.addEventListener('touchmove', drawTouch);
+            canvas.addEventListener('touchend', stopDrawingTouch);
+            canvas.addEventListener('touchcancel', stopDrawingTouch);
+            
+            function updatePreview() {
+                if(!previewCtx) return;
+                previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+                
+                const scaleX = previewCanvas.width / canvas.width;
+                const scaleY = previewCanvas.height / canvas.height;
+                const scale = Math.min(scaleX, scaleY) * 0.6;
+                
+                const offsetX = (previewCanvas.width - canvas.width * scale) / 2;
+                const offsetY = (previewCanvas.height - canvas.height * scale) / 2;
+                
+                previewCtx.save();
+                previewCtx.translate(offsetX, offsetY);
+                previewCtx.scale(scale, scale);
+                
+                signaturePaths.forEach((path) => {
+                    if(path.type === 'start') {
+                        previewCtx.beginPath();
+                        previewCtx.moveTo(path.x, path.y);
+                        previewCtx.lineWidth = path.width;
+                    } else if(path.type === 'draw') {
+                        previewCtx.lineTo(path.x, path.y);
+                        previewCtx.stroke();
+                    }
+                });
+                
+                previewCtx.restore();
+            }
+            
+            document.getElementById('clear-signature-modal').addEventListener('click', function() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                if(previewCtx) previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+                hasDrawn = false;
+                signaturePaths = [];
+            });
+        }
+        
+        $('#open-signature-modal').click(function(e) {
+            e.preventDefault();
+            const action = $('#action').val();
+            const commentaire = $('#commentaire').val();
+            
+            if(!action) {
+                alert('Veuillez choisir une action de validation !');
+                return false;
+            }
+            
+            if(action == 'rejetee') {
+                if(!commentaire.trim()) {
+                    alert('Le motif du rejet est obligatoire !');
+                    return false;
+                }
+                if(confirm('Êtes-vous sûr de vouloir REJETER cette mission ?')) {
+                    document.getElementById('validationForm').submit();
+                }
+                return false;
+            }
+            
+            $('#signatureModal').modal('show');
+            return false;
+        });
+        
+        $('#confirm-signature').click(function(e) {
+            e.preventDefault();
+            
+            if(!hasDrawn) {
+                alert('Veuillez dessiner votre signature avant de valider !');
+                return false;
+            }
+            
+            console.log('Conversion de la signature en base64...');
+            const signatureData = canvas.toDataURL('image/png');
+            $('#signature_data_hidden').val(signatureData);
+            
+            console.log('Signature enregistrée, longueur:', signatureData.length);
+            
+            $('#signatureModal').modal('hide');
+            
+            setTimeout(function() {
+                console.log('Soumission du formulaire...');
+                document.getElementById('validationForm').submit();
+            }, 500);
+            
+            return false;
+        });
+        
         $('#action').change(function() {
             var action = $(this).val();
             var commentaire = $('#commentaire');
@@ -257,35 +574,10 @@ if (strlen($_SESSION['GMScid']) == 0) {
             if(action == 'rejetee') {
                 commentaire.attr('required', true);
                 commentaire.attr('placeholder', 'Motif du rejet (obligatoire)...');
-                commentaire.closest('.form-group').find('label').html('Commentaire/Remarque <span class="text-danger">*</span>:');
             } else {
                 commentaire.removeAttr('required');
                 commentaire.attr('placeholder', 'Ajoutez vos commentaires ou remarques...');
-                commentaire.closest('.form-group').find('label').html('Commentaire/Remarque:');
             }
-        });
-        
-        $('#validationForm').submit(function(e) {
-            var action = $('#action').val();
-            var commentaire = $('#commentaire').val();
-            
-            if(!action) {
-                alert('Veuillez choisir une action de validation !');
-                e.preventDefault();
-                return false;
-            }
-            
-            if(action == 'rejetee' && !commentaire.trim()) {
-                alert('Le motif du rejet est obligatoire !');
-                e.preventDefault();
-                return false;
-            }
-            
-            var message = action == 'validee' ? 
-                'Êtes-vous sûr de vouloir VALIDER cette mission ?' : 
-                'Êtes-vous sûr de vouloir REJETER cette mission ?';
-                
-            return confirm(message);
         });
     });
     </script>
@@ -293,3 +585,4 @@ if (strlen($_SESSION['GMScid']) == 0) {
 </html>
 
 <?php } ?>
+

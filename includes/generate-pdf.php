@@ -17,10 +17,10 @@ if(!$access_granted) {
 
 $mid = intval($_GET['mid']);
 
-// IMPORTANT: Récupérer TOUS les détails y compris la signature
+// Récupérer TOUS les détails y compris cachet et signature
 $sql = "SELECT m.*, u.Nom, u.Prenom, u.Fonction as UserFonction, u.Departement,
                v.Nom as ValidatorNom, v.Prenom as ValidatorPrenom, v.Fonction as ValidatorFonction,
-               v.SignatureImage as ValidatorSignature
+               v.OfficialStamp as ValidatorStamp
         FROM tblmissions m 
         JOIN tblusers u ON m.UserID = u.ID 
         LEFT JOIN tblusers v ON m.ValidatedBy = v.ID
@@ -38,13 +38,14 @@ if($query->rowCount() == 0) {
 // Charger TCPDF
 require_once('../vendor/tecnickcom/tcpdf/tcpdf.php');
 
-// Définir le chemin des images
+// Définir les chemins
 $basePath = dirname(__DIR__);
 $basePath = str_replace(DIRECTORY_SEPARATOR . DIRECTORY_SEPARATOR, DIRECTORY_SEPARATOR, $basePath);
 define('PDF_IMAGE_PATH', $basePath . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'images' . DIRECTORY_SEPARATOR);
 define('PDF_SIGNATURE_PATH', $basePath . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'signatures' . DIRECTORY_SEPARATOR);
+define('PDF_STAMP_PATH', $basePath . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'stamps' . DIRECTORY_SEPARATOR);
 
-// Classe personnalisée pour le PDF
+// Classe personnalisée
 class MissionPDF extends TCPDF {
     private $referenceNumber;
     
@@ -52,7 +53,6 @@ class MissionPDF extends TCPDF {
         $this->referenceNumber = $ref;
     }
     
-    // En-tête personnalisé
     public function Header() {
         $headerImage = PDF_IMAGE_PATH . 'header-sntp.jpg';
         
@@ -87,7 +87,6 @@ class MissionPDF extends TCPDF {
         $this->Ln(3);
     }
     
-    // Pied de page personnalisé
     public function Footer() {
         $footerImage = PDF_IMAGE_PATH . 'footer-sntp.jpg';
         
@@ -102,34 +101,25 @@ class MissionPDF extends TCPDF {
     }
 }
 
-// Créer le document PDF
+// Créer le PDF
 $pdf = new MissionPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
 
-// Métadonnées
 $pdf->SetCreator('SNTP - Gestion des Missions');
 $pdf->SetAuthor('SNTP');
 $pdf->SetTitle('Ordre de Mission - ' . $mission->ReferenceNumber);
 $pdf->SetSubject('Ordre de Mission');
 
-// Configurer la référence
 $pdf->setReferenceNumber($mission->ReferenceNumber);
-
-// Activer en-tête et pied de page
 $pdf->setPrintHeader(true);
 $pdf->setPrintFooter(true);
-
-// Marges
 $pdf->SetMargins(20, 58, 20);
 $pdf->SetHeaderMargin(0);
 $pdf->SetFooterMargin(22);
-
-// Saut de page automatique
 $pdf->SetAutoPageBreak(TRUE, 25);
 
-// Ajouter une page
 $pdf->AddPage();
 
-// TITRE: "ORDRE DE MISSION"
+// TITRE
 $pdf->SetFont('helvetica', 'BU', 20);
 $pdf->SetTextColor(0, 0, 0);
 $pdf->Ln(15);
@@ -163,17 +153,17 @@ $itineraire = strtoupper($mission->VilleDepart) . ' - ' . strtoupper(str_replace
 $pdf->Cell(0, $lineHeight, $itineraire, 0, 1, 'L');
 $pdf->Ln(2);
 
-// Motif de déplacement
+// Motif
 $pdf->Cell($labelWidth, $lineHeight, 'Motif de Déplacement :', 0, 0, 'L');
 $pdf->Cell(0, $lineHeight, $mission->MotifDeplacement, 0, 1, 'L');
 $pdf->Ln(2);
 
-// Date de départ
+// Date départ
 $pdf->Cell($labelWidth, $lineHeight, 'Date de Départ :', 0, 0, 'L');
 $pdf->Cell(0, $lineHeight, date('d/m/Y', strtotime($mission->DateDepart)), 0, 1, 'L');
 $pdf->Ln(2);
 
-// Date de retour
+// Date retour
 $pdf->Cell($labelWidth, $lineHeight, 'Date de Retour :', 0, 0, 'L');
 $pdf->Cell(0, $lineHeight, date('d/m/Y H:i', strtotime($mission->DateRetour)), 0, 1, 'L');
 $pdf->Ln(2);
@@ -182,72 +172,81 @@ $pdf->Ln(2);
 $pdf->Cell($labelWidth, $lineHeight, 'Moyen de Transport :', 0, 0, 'L');
 $pdf->Cell(0, $lineHeight, $mission->MoyenTransport, 0, 1, 'L');
 
-// SIGNATURE
-$pdf->Ln(25);
+// ========== SECTION SIGNATURE ==========
+$pdf->Ln(20);
 $pdf->SetFont('helvetica', '', 11);
 $pdf->Cell(0, 6, 'Fait à El-Hamiz, le ' . date('d/m/Y') . '.', 0, 1, 'R');
-$pdf->Ln(10);
+$pdf->Ln(8);
 
-// Titre de la fonction
+// Fonction
 $pdf->SetFont('helvetica', 'B', 11);
 $pdf->Cell(0, 6, 'La Directrice des Ressources Humaines', 0, 1, 'R');
 $pdf->Ln(1);
 $pdf->Cell(0, 6, 'et des Moyens Généraux', 0, 1, 'R');
-$pdf->Ln(10);
+$pdf->Ln(3);
 
-// Nom du validateur
+// Position de départ pour les images
+$pageWidth = $pdf->getPageWidth();
+$rightMargin = 20;
+$currentY = $pdf->GetY();
+
+// ========== CACHET OFFICIEL (EN HAUT) ==========
+if(isset($mission->ValidatorStamp) && !empty($mission->ValidatorStamp)) {
+    $stampPath = PDF_STAMP_PATH . $mission->ValidatorStamp;
+    
+    if(file_exists($stampPath) && is_readable($stampPath)) {
+        $stampWidth = 50;
+        $stampX = $pageWidth - $rightMargin - $stampWidth;
+        
+        try {
+            $pdf->Image($stampPath, $stampX, $currentY, $stampWidth, 0, '', '', '', false, 300, '', false, false, 0);
+            
+            // Calculer la hauteur du cachet pour positionner la signature en dessous
+            list($imgWidth, $imgHeight) = getimagesize($stampPath);
+            $stampHeightInPDF = ($stampWidth * $imgHeight) / $imgWidth;
+            $currentY += $stampHeightInPDF + 3; // Espacement entre cachet et signature
+        } catch(Exception $e) {
+            $currentY += 25; // Fallback
+        }
+    } else {
+        $currentY += 25;
+    }
+} else {
+    $currentY += 25;
+}
+
+// ========== SIGNATURE MANUSCRITE (EN BAS) ==========
+if(isset($mission->SignaturePath) && !empty($mission->SignaturePath)) {
+    $signaturePath = PDF_SIGNATURE_PATH . $mission->SignaturePath;
+    
+    if(file_exists($signaturePath) && is_readable($signaturePath)) {
+        $signatureWidth = 45;
+        $signatureX = $pageWidth - $rightMargin - $signatureWidth;
+        
+        try {
+            $pdf->SetY($currentY);
+            $pdf->Image($signaturePath, $signatureX, $currentY, $signatureWidth, 0, '', '', '', false, 300, '', false, false, 0);
+            
+            // Calculer la hauteur de la signature
+            list($imgWidth, $imgHeight) = getimagesize($signaturePath);
+            $signatureHeightInPDF = ($signatureWidth * $imgHeight) / $imgWidth;
+            $currentY += $signatureHeightInPDF + 2;
+        } catch(Exception $e) {
+            $currentY += 20;
+        }
+    } else {
+        $currentY += 20;
+    }
+} else {
+    $currentY += 20;
+}
+
+// Nom du validateur (en dessous de tout)
+$pdf->SetY($currentY);
 $validatorName = 'I. BOURAHLA';
 if (isset($mission->ValidatorNom) && isset($mission->ValidatorPrenom)) {
     $firstInitial = mb_substr($mission->ValidatorPrenom, 0, 1);
     $validatorName = strtoupper($firstInitial . '. ' . $mission->ValidatorNom);
-}
-
-// ========== INSERTION DE LA SIGNATURE ==========
-// Vérifier si on a une signature dans la mission OU du validateur
-$signatureFile = null;
-
-// D'abord, vérifier si la mission a une signature spécifique
-if(isset($mission->SignaturePath) && !empty($mission->SignaturePath)) {
-    $signatureFile = $mission->SignaturePath;
-}
-// Sinon, utiliser la signature enregistrée du validateur
-elseif(isset($mission->ValidatorSignature) && !empty($mission->ValidatorSignature)) {
-    $signatureFile = $mission->ValidatorSignature;
-}
-
-if($signatureFile) {
-    $signaturePath = PDF_SIGNATURE_PATH . $signatureFile;
-    
-    // Debug: Afficher le chemin (en développement)
-    if(isset($_GET['debug'])) {
-        echo "Chemin signature: " . $signaturePath . "<br>";
-        echo "Fichier existe: " . (file_exists($signaturePath) ? "OUI" : "NON") . "<br>";
-        echo "Fichier lisible: " . (is_readable($signaturePath) ? "OUI" : "NON") . "<br>";
-        exit();
-    }
-    
-    if(file_exists($signaturePath) && is_readable($signaturePath)) {
-        // Calculer la position pour aligner à droite
-        $signatureWidth = 50;  // Largeur en mm
-        $pageWidth = $pdf->getPageWidth();
-        $rightMargin = 20;
-        $signatureX = $pageWidth - $rightMargin - $signatureWidth;
-        
-        // Insérer l'image de la signature
-        try {
-            $pdf->Image($signaturePath, $signatureX, $pdf->GetY(), $signatureWidth, 0, '', '', '', false, 300, '', false, false, 0);
-            $pdf->Ln(10); // Espace après la signature
-        } catch(Exception $e) {
-            // En cas d'erreur, continuer sans signature
-            $pdf->Ln(15);
-        }
-    } else {
-        // Pas de signature trouvée, ajouter de l'espace
-        $pdf->Ln(15);
-    }
-} else {
-    // Aucune signature définie
-    $pdf->Ln(15);
 }
 
 $pdf->SetFont('helvetica', 'BU', 11);
