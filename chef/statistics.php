@@ -18,6 +18,90 @@ if (strlen($_SESSION['GMScid']) == 0) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        /* Styles pour l'impression - Masquer la sidebar et les éléments de navigation */
+        @media print {
+            /* Masquer la sidebar */
+            .sidebar,
+            .main-sidebar,
+            aside,
+            nav.sidebar,
+            .left-sidebar,
+            #sidebar {
+                display: none !important;
+            }
+            
+            /* Masquer l'en-tête de navigation */
+            .main-header,
+            .top-header,
+            header,
+            .navbar,
+            .breadcrumb {
+                display: none !important;
+            }
+            
+            /* Masquer les boutons d'action */
+            .btn,
+            button,
+            .no-print {
+                display: none !important;
+            }
+            
+            /* Étendre le contenu principal sur toute la largeur */
+            .main-content {
+                margin-left: 0 !important;
+                padding-left: 0 !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            
+            /* Ajuster le conteneur */
+            .container-fluid {
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            
+            /* Optimiser l'affichage des cartes */
+            .card {
+                page-break-inside: avoid;
+                box-shadow: none !important;
+                border: 1px solid #dee2e6 !important;
+            }
+            
+            /* Optimiser l'affichage des graphiques */
+            canvas {
+                max-width: 100% !important;
+                height: auto !important;
+            }
+            
+            /* Supprimer les marges inutiles */
+            body {
+                margin: 0;
+                padding: 15px;
+            }
+            
+            /* Titre de la page */
+            h2 {
+                page-break-after: avoid;
+                margin-bottom: 20px;
+            }
+            
+            /* Éviter les coupures de page dans les tableaux */
+            table {
+                page-break-inside: avoid;
+            }
+            
+            /* Optimiser les couleurs pour l'impression */
+            .bg-primary,
+            .bg-success,
+            .bg-danger,
+            .bg-warning {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+    </style>
 </head>
 <body>
     <?php include_once('includes/sidebar.php'); ?>
@@ -28,7 +112,7 @@ if (strlen($_SESSION['GMScid']) == 0) {
         <div class="container-fluid p-4">
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <h2><i class="fas fa-chart-line"></i> Mes Statistiques de Validation</h2>
-                <nav aria-label="breadcrumb">
+                <nav aria-label="breadcrumb" class="no-print">
                     <ol class="breadcrumb">
                         <li class="breadcrumb-item"><a href="dashboard.php">Accueil</a></li>
                         <li class="breadcrumb-item active">Statistiques</li>
@@ -278,7 +362,7 @@ if (strlen($_SESSION['GMScid']) == 0) {
             </div>
             
             <!-- Actions rapides -->
-            <div class="row mt-4">
+            <div class="row mt-4 no-print">
                 <div class="col-12">
                     <div class="card">
                         <div class="card-header">
@@ -390,3 +474,4 @@ if (strlen($_SESSION['GMScid']) == 0) {
 </html>
 
 <?php } ?>
+

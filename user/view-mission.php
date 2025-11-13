@@ -253,13 +253,9 @@ if (strlen($_SESSION['GMSuid']) == 0) {
                             <?php } ?>
                             
                             <?php if($mission->Status == 'validee') { ?>
-                            <a href="print-mission.php?mid=<?php echo $mission->ID; ?>" 
+                            <a href="../includes/generate-pdf.php?mid=<?php echo $mission->ID; ?>" 
                                class="btn btn-success btn-block" target="_blank">
                                 <i class="fas fa-print"></i> Imprimer l'Ordre de Mission
-                            </a>
-                            <a href="print-mission.php?mid=<?php echo $mission->ID; ?>&download=1" 
-                               class="btn btn-info btn-block mt-2">
-                                <i class="fas fa-download"></i> Télécharger PDF
                             </a>
                             <?php } ?>
                             
