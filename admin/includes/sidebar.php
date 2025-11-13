@@ -35,6 +35,9 @@
         </div>
         
         <div class="nav-section">
+        <a class="nav-link" href="activity-logs.php">
+          <i class="fas fa-history"></i> Logs d'Activité
+        </a>
             <h6 class="nav-header text-muted px-3 py-2">RAPPORTS</h6>
             <a class="nav-link text-white" href="reports.php">
                 <i class="fas fa-chart-bar"></i> Statistiques
@@ -54,12 +57,15 @@
     top: 0;
     left: 0;
     z-index: 100;
-    padding-top: 60px;
+    padding-top: 5px;
+}
+
+.dropdown-menu.show {
+  margin-left: -5rem;
 }
 
 .main-content {
     margin-left: 250px;
-    padding-top: 60px;
 }
 
 .nav-section {

@@ -2,23 +2,54 @@
 session_start();
 error_reporting(0);
 include('../includes/config.php');
+require_once('../includes/security.php');
+
+$securityManager = new SecurityManager($dbh);
+$errorMessage = '';
+$infoMessage = '';
 
 if(isset($_POST['login'])) {
-    $username = $_POST['username'];
+    $username = trim($_POST['username']);
     $password = $_POST['password'];
     
-    $sql = "SELECT ID,Password,Role FROM tblusers WHERE Email=:username AND Role='user'";
-    $query = $dbh->prepare($sql);
-    $query->bindParam(':username', $username, PDO::PARAM_STR);
-    $query->execute();
-    $result = $query->fetch(PDO::FETCH_OBJ);
-    
-    if($result && password_verify($password, $result->Password)) {
-        $_SESSION['GMSuid'] = $result->ID;
-        $_SESSION['login'] = $username;
-        echo "<script>alert('Connexion réussie !'); window.location.href='dashboard.php';</script>";
+    if ($securityManager->isAccountLocked($username)) {
+        $errorMessage = "Votre compte est temporairement verrouillé en raison de tentatives de connexion échouées. Veuillez réessayer dans 15 minutes.";
+        ActivityLogger::log($dbh, null, $username, 'login_attempt_locked', 'user', null, 
+            'Tentative de connexion sur compte verrouillé', 'warning');
     } else {
-        echo "<script>alert('Identifiants invalides !');</script>";
+        $sql = "SELECT ID, Password, Role FROM tblusers WHERE Email=:username AND Role='user'";
+        $query = $dbh->prepare($sql);
+        $query->bindParam(':username', $username, PDO::PARAM_STR);
+        $query->execute();
+        $result = $query->fetch(PDO::FETCH_OBJ);
+        
+        if($result && password_verify($password, $result->Password)) {
+            $securityManager->recordLoginAttempt($username, $securityManager->getClientIP(), true);
+            
+            $_SESSION['GMSuid'] = $result->ID;
+            $_SESSION['login'] = $username;
+            $_SESSION['role'] = 'user';
+            
+            $securityManager->createSecureSession($result->ID);
+            
+            ActivityLogger::log($dbh, $result->ID, $username, 'login_success', 'user', $result->ID, 
+                'Connexion utilisateur réussie', 'success');
+            
+            header('Location: dashboard.php');
+            exit();
+        } else {
+            $securityManager->recordLoginAttempt($username, $securityManager->getClientIP(), false);
+            $remainingAttempts = $securityManager->getRemainingAttempts($username);
+            
+            ActivityLogger::log($dbh, null, $username, 'login_failed', 'user', null, 
+                'Tentative de connexion échouée', 'failure');
+            
+            if ($remainingAttempts > 0) {
+                $errorMessage = "Identifiants invalides. Il vous reste $remainingAttempts tentative(s).";
+            } else {
+                $errorMessage = "Identifiants invalides. Votre compte a été verrouillé pour 15 minutes.";
+            }
+        }
     }
 }
 ?>
@@ -57,6 +88,10 @@ if(isset($_POST['login'])) {
             padding: 12px;
             font-weight: bold;
         }
+        .alert {
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
@@ -69,6 +104,18 @@ if(isset($_POST['login'])) {
                         <h3>Connexion Utilisateur</h3>
                         <p class="text-muted">Gestion de vos Ordres de Mission - SNTP</p>
                     </div>
+                    
+                    <?php if($errorMessage): ?>
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle"></i> <?php echo $errorMessage; ?>
+                    </div>
+                    <?php endif; ?>
+                    
+                    <?php if($infoMessage): ?>
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> <?php echo $infoMessage; ?>
+                    </div>
+                    <?php endif; ?>
                     
                     <form method="POST">
                         <div class="form-group">
@@ -119,3 +166,4 @@ if(isset($_POST['login'])) {
     </div>
 </body>
 </html>
+

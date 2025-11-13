@@ -52,13 +52,16 @@
     top: 0;
     left: 0;
     z-index: 100;
-    padding-top: 60px;
+    padding-top: 5px;
     background: linear-gradient(180deg, #17a2b8 0%, #138496 100%) !important;
+}
+
+.dropdown-menu.show {
+  margin-left: -5rem;
 }
 
 .main-content {
     margin-left: 250px;
-    padding-top: 60px;
 }
 
 .nav-section {
