@@ -1,7 +1,10 @@
 <?php
+// CORRECTION 1: Nettoyer le buffer et désactiver la sortie d'erreurs avant tout
+ob_start();
+error_reporting(0);
+ini_set('display_errors', 0);
+
 session_start();
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
 include('config.php');
 
 // Vérifier l'accès
@@ -20,7 +23,7 @@ $mid = intval($_GET['mid']);
 // Récupérer TOUS les détails y compris cachet et signature
 $sql = "SELECT m.*, u.Nom, u.Prenom, u.Fonction as UserFonction, u.Departement,
                v.Nom as ValidatorNom, v.Prenom as ValidatorPrenom, v.Fonction as ValidatorFonction,
-               v.OfficialStamp as ValidatorStamp
+               v.StampImage as ValidatorStamp
         FROM tblmissions m 
         JOIN tblusers u ON m.UserID = u.ID 
         LEFT JOIN tblusers v ON m.ValidatedBy = v.ID
@@ -31,6 +34,7 @@ $query->execute();
 $mission = $query->fetch(PDO::FETCH_OBJ);
 
 if($query->rowCount() == 0) {
+    ob_end_clean();
     echo "<script>alert('Mission non trouvée ou non validée !'); window.history.back();</script>";
     exit();
 }
@@ -44,6 +48,52 @@ $basePath = str_replace(DIRECTORY_SEPARATOR . DIRECTORY_SEPARATOR, DIRECTORY_SEP
 define('PDF_IMAGE_PATH', $basePath . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'images' . DIRECTORY_SEPARATOR);
 define('PDF_SIGNATURE_PATH', $basePath . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'signatures' . DIRECTORY_SEPARATOR);
 define('PDF_STAMP_PATH', $basePath . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'stamps' . DIRECTORY_SEPARATOR);
+
+// CORRECTION 2: Fonction pour corriger les profils ICC des images PNG
+function fixImageICCProfile($imagePath) {
+    if (!file_exists($imagePath)) {
+        return false;
+    }
+    
+    $imageInfo = @getimagesize($imagePath);
+    if (!$imageInfo) {
+        return false;
+    }
+    
+    $mimeType = $imageInfo['mime'];
+    
+    // Corriger uniquement les PNG qui causent des warnings libpng
+    if ($mimeType === 'image/png') {
+        try {
+            $image = @imagecreatefrompng($imagePath);
+            if ($image === false) {
+                return false;
+            }
+            
+            // Sauvegarder sans profil ICC
+            imagealphablending($image, false);
+            imagesavealpha($image, true);
+            
+            $tempPath = $imagePath . '.tmp';
+            $result = @imagepng($image, $tempPath, 9);
+            imagedestroy($image);
+            
+            if ($result) {
+                // Remplacer l'original
+                @unlink($imagePath);
+                @rename($tempPath, $imagePath);
+                return true;
+            } else {
+                @unlink($tempPath);
+                return false;
+            }
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+    
+    return true;
+}
 
 // Classe personnalisée
 class MissionPDF extends TCPDF {
@@ -98,6 +148,21 @@ class MissionPDF extends TCPDF {
             $this->Cell(0, 5, 'Siège Social : Route Nationale n°5 El Hamiz BP 39 - Bordj El Kiffan - Alger', 0, 1, 'C');
             $this->Cell(0, 5, 'Tél : 023.86.35.95/99  Fax : 023.86.36.03  Site Internet : www.sntp.dz', 0, 1, 'C');
         }
+    }
+}
+
+// CORRECTION 3: Corriger les profils ICC avant de créer le PDF
+if(isset($mission->ValidatorStamp) && !empty($mission->ValidatorStamp)) {
+    $stampPath = PDF_STAMP_PATH . $mission->ValidatorStamp;
+    if(file_exists($stampPath)) {
+        fixImageICCProfile($stampPath);
+    }
+}
+
+if(isset($mission->SignaturePath) && !empty($mission->SignaturePath)) {
+    $signaturePath = PDF_SIGNATURE_PATH . $mission->SignaturePath;
+    if(file_exists($signaturePath)) {
+        fixImageICCProfile($signaturePath);
     }
 }
 
@@ -173,7 +238,7 @@ $pdf->Cell($labelWidth, $lineHeight, 'Moyen de Transport :', 0, 0, 'L');
 $pdf->Cell(0, $lineHeight, $mission->MoyenTransport, 0, 1, 'L');
 
 // ========== SECTION SIGNATURE ==========
-$pdf->Ln(20);
+$pdf->Ln(17);
 $pdf->SetFont('helvetica', '', 11);
 $pdf->Cell(0, 6, 'Fait à El-Hamiz, le ' . date('d/m/Y') . '.', 0, 1, 'R');
 $pdf->Ln(8);
@@ -191,28 +256,31 @@ $rightMargin = 20;
 $currentY = $pdf->GetY();
 
 // ========== CACHET OFFICIEL (EN HAUT) ==========
+$stampHeightInPDF = 0;
 if(isset($mission->ValidatorStamp) && !empty($mission->ValidatorStamp)) {
     $stampPath = PDF_STAMP_PATH . $mission->ValidatorStamp;
     
     if(file_exists($stampPath) && is_readable($stampPath)) {
-        $stampWidth = 50;
+        $stampWidth = 55;  // Taille du cachet rond
         $stampX = $pageWidth - $rightMargin - $stampWidth;
         
         try {
-            $pdf->Image($stampPath, $stampX, $currentY, $stampWidth, 0, '', '', '', false, 300, '', false, false, 0);
+            // Réduire l'opacité du cachet pour qu'il serve de fond
+            $pdf->setAlpha(0.4);  // 40% d'opacité pour le cachet
             
-            // Calculer la hauteur du cachet pour positionner la signature en dessous
+            // Positionner le cachet
+            $pdf->Image($stampPath, $stampX, $currentY, $stampWidth, 0, '', '', '', false, 300, '', false, false, 0, false, false, false);
+            
+            // Restaurer l'opacité complète
+            $pdf->setAlpha(1);
+            
+            // Calculer la hauteur réelle du cachet
             list($imgWidth, $imgHeight) = getimagesize($stampPath);
             $stampHeightInPDF = ($stampWidth * $imgHeight) / $imgWidth;
-            $currentY += $stampHeightInPDF + 3; // Espacement entre cachet et signature
         } catch(Exception $e) {
-            $currentY += 25; // Fallback
+            $pdf->setAlpha(1);  // S'assurer de restaurer l'opacité en cas d'erreur
         }
-    } else {
-        $currentY += 25;
     }
-} else {
-    $currentY += 25;
 }
 
 // ========== SIGNATURE MANUSCRITE (EN BAS) ==========
@@ -221,24 +289,35 @@ if(isset($mission->SignaturePath) && !empty($mission->SignaturePath)) {
     
     if(file_exists($signaturePath) && is_readable($signaturePath)) {
         $signatureWidth = 45;
-        $signatureX = $pageWidth - $rightMargin - $signatureWidth;
+        
+        // Calculer la position pour centrer la signature sur le cachet
+        list($sigWidth, $sigHeight) = getimagesize($signaturePath);
+        $signatureHeightInPDF = ($signatureWidth * $sigHeight) / $sigWidth;
+        
+        // Centrer verticalement la signature sur le cachet
+        $signatureY = $currentY + ($stampHeightInPDF / 2) - ($signatureHeightInPDF / 2);
+        
+        // Centrer horizontalement la signature sur le cachet
+        $signatureX = $pageWidth - $rightMargin - 55/2 - $signatureWidth/2;
         
         try {
-            $pdf->SetY($currentY);
-            $pdf->Image($signaturePath, $signatureX, $currentY, $signatureWidth, 0, '', '', '', false, 300, '', false, false, 0);
+            // Opacité complète pour la signature (bien visible)
+            $pdf->setAlpha(1.0);  // 100% d'opacité pour la signature
             
-            // Calculer la hauteur de la signature
-            list($imgWidth, $imgHeight) = getimagesize($signaturePath);
-            $signatureHeightInPDF = ($signatureWidth * $imgHeight) / $imgWidth;
-            $currentY += $signatureHeightInPDF + 2;
+            // Superposer la signature PAR-DESSUS le cachet
+            $pdf->Image($signaturePath, $signatureX, $signatureY, $signatureWidth, 0, '', '', '', false, 300, '', false, false, 1, false, false, false);
+            
+            // Mettre à jour currentY en fonction de la zone occupée
+            $totalHeight = max($stampHeightInPDF, $signatureY - $currentY + $signatureHeightInPDF);
+            $currentY += $totalHeight + 2;
         } catch(Exception $e) {
-            $currentY += 20;
+            $currentY += max($stampHeightInPDF, 20) + 2;
         }
     } else {
-        $currentY += 20;
+        $currentY += $stampHeightInPDF + 2;
     }
 } else {
-    $currentY += 20;
+    $currentY += $stampHeightInPDF + 2;
 }
 
 // Nom du validateur (en dessous de tout)
@@ -252,6 +331,9 @@ if (isset($mission->ValidatorNom) && isset($mission->ValidatorPrenom)) {
 $pdf->SetFont('helvetica', 'BU', 11);
 $pdf->Cell(0, 6, $validatorName, 0, 1, 'R');
 
+// CORRECTION 6: Nettoyer le buffer avant la génération
+ob_end_clean();
+
 // Générer le PDF
 $filename = 'ordre_mission_' . $mission->ReferenceNumber . '.pdf';
 
@@ -260,5 +342,6 @@ if(isset($_GET['download']) && $_GET['download'] == '1') {
 } else {
     $pdf->Output($filename, 'I');
 }
+exit();
 ?>
 
